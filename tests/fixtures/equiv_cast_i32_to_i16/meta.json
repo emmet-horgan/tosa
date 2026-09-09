@@ -1,0 +1,10 @@
+{
+  "input_names": [
+    "input_0"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "i16",
+  "op": "cast"
+}

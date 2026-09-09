@@ -1,0 +1,10 @@
+{
+  "input_names": [
+    "input_0"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "perm021",
+  "op": "transpose"
+}

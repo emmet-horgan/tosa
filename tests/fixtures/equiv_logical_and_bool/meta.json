@@ -1,0 +1,11 @@
+{
+  "input_names": [
+    "input_0",
+    "input_1"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "bool",
+  "op": "logical_and"
+}

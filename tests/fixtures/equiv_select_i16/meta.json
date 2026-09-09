@@ -1,0 +1,12 @@
+{
+  "input_names": [
+    "condition",
+    "input_a",
+    "input_b"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "i16",
+  "op": "select"
+}

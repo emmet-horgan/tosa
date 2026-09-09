@@ -1,0 +1,12 @@
+{
+  "input_names": [
+    "input_0",
+    "input_zp",
+    "output_zp"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "i64",
+  "op": "negate"
+}

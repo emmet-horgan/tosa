@@ -1,0 +1,13 @@
+{
+  "input_names": [
+    "input_0",
+    "input_1",
+    "a_zp",
+    "b_zp"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "f32",
+  "op": "matmul"
+}

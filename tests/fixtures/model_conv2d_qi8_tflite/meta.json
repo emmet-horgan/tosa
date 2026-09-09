@@ -1,0 +1,11 @@
+{
+  "input_names": [
+    "TosaInput_0"
+  ],
+  "output_names": [
+    "TosaOutput_0"
+  ],
+  "op": "model",
+  "dtype": "mixed",
+  "source": "reference_model/examples/test_conv2d_1x1_1x32x32x8_qi8_st11_padSAME_dilat11/flatbuffer-tflite/test_conv2d_1x1_1x32x32x8_qi8_st11_padSAME_dilat11.tosa"
+}

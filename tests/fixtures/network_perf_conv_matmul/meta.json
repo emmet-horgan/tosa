@@ -1,0 +1,13 @@
+{
+  "input_names": [
+    "input_0",
+    "conv_w",
+    "conv_b",
+    "matmul_w"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "op": "network",
+  "dtype": "f32"
+}

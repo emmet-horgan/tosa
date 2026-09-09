@@ -1,0 +1,12 @@
+{
+  "input_names": [
+    "cond",
+    "a",
+    "b"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "false",
+  "op": "cond_if"
+}

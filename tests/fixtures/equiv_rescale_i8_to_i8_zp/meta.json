@@ -1,0 +1,14 @@
+{
+  "input_names": [
+    "input_0",
+    "multiplier",
+    "shift",
+    "input_zp",
+    "output_zp"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "zp",
+  "op": "rescale"
+}

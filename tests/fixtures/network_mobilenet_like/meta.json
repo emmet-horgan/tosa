@@ -1,0 +1,10 @@
+{
+  "input_names": [
+    "input"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "op": "network",
+  "dtype": "f32"
+}

@@ -1,0 +1,11 @@
+{
+  "input_names": [
+    "input_0",
+    "indices"
+  ],
+  "output_names": [
+    "result-0"
+  ],
+  "dtype": "i8",
+  "op": "gather"
+}
