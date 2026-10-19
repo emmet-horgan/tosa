@@ -39,6 +39,7 @@ import gen_conformance as gen  # noqa: E402
 REPO = gen.REPO
 DOC = REPO / "docs" / "OPERATOR_STATUS.md"
 SPEC_CACHE = REPO / "target" / "conformance-spec.json"
+RESULTS_CACHE = REPO / "target" / "conformance-results.json"
 BEGIN, END = "<!-- BEGIN GENERATED -->", "<!-- END GENERATED -->"
 
 # Type tokens, including MX block-scaled ones such as ``bs32-f8ue8m0-f8e4m3``.
@@ -107,7 +108,9 @@ def pct(num: int, den: int) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--refresh-spec", action="store_true")
-    parser.add_argument("--no-run", action="store_true", help="do not run the suites (assume all pass)")
+    parser.add_argument(
+        "--no-run", action="store_true", help="do not run the suites; reuse the last run's results"
+    )
     args = parser.parse_args()
 
     ops = sorted(p.name for p in gen.DEFAULT_OUT.iterdir() if p.is_dir())
@@ -121,16 +124,27 @@ def main() -> None:
         SPEC_CACHE.parent.mkdir(parents=True, exist_ok=True)
         SPEC_CACHE.write_text(json.dumps(spec, indent=0))
 
-    failing = set() if args.no_run else run_suite(gen.DEFAULT_OUT)
-    failing_full = None if args.no_run else run_suite(gen.FULL_OUT)
+    if args.no_run:
+        # Reuse the results of the last run, if any.
+        cached = json.loads(RESULTS_CACHE.read_text()) if RESULTS_CACHE.exists() else {}
+        failing = set(cached.get("failing", []))
+        failing_full = set(cached["failing_full"]) if cached.get("failing_full") is not None else None
+    else:
+        failing = run_suite(gen.DEFAULT_OUT)
+        failing_full = run_suite(gen.FULL_OUT)
+        RESULTS_CACHE.write_text(json.dumps({
+            "failing": sorted(failing),
+            "failing_full": None if failing_full is None else sorted(failing_full),
+        }))
 
+    mx = re.compile(r"bs\d+|f6e|f4e2m1|mxint|ue8m0")
     rows = []
     totals = defaultdict(int)
     for op in ops:
         names = cases(gen.DEFAULT_OUT, op)
         pos = [n for n in names if "_ERRORIF_" not in n]
         neg = [n for n in names if "_ERRORIF_" in n]
-        bad = {n for n in names if f"{op}::{n}" in (failing or set())}
+        bad = {n for n in names if f"{op}::{n}" in failing}
         sigs, kinds = classify(names)
         spec_sigs, spec_kinds = classify(spec.get(op, []))
         # Signatures also come from full-suite generation, which may cover more.
@@ -141,43 +155,64 @@ def main() -> None:
             kinds |= fk
         sig_cov = len(sigs & spec_sigs) if spec_sigs else len(sigs)
         kind_cov = len(kinds & spec_kinds) if spec_kinds else len(kinds)
+        non_mx = {s for s in spec_sigs if not mx.search(s)}
         if full and failing_full is not None:
             full_bad = sum(1 for n in full if f"{op}::{n}" in failing_full)
             full_txt = f"{len(full) - full_bad}/{len(full)}"
+            totals["full"] += len(full)
+            totals["full_bad"] += full_bad
         else:
             full_txt = "-"
         # Coverage estimate: type signatures weighted 3:1 against ERROR_IF kinds.
-        sig_ratio = sig_cov / len(spec_sigs) if spec_sigs else 1.0
+        # Without generator-defined positive tests (FFT), the custom tests count in full.
+        sig_ratio = sig_cov / len(spec_sigs) if spec_sigs else float(bool(sigs))
         kind_ratio = kind_cov / len(spec_kinds) if spec_kinds else 1.0
         estimate = (3 * sig_ratio + kind_ratio) / 4
+        sig_txt = f"{sig_cov}/{len(spec_sigs)}" if spec_sigs else f"{sig_cov}/n/a"
+        non_mx_txt = f"{len(sigs & non_mx)}/{len(non_mx)}" if spec_sigs else "n/a"
         rows.append(
             f"| {op.upper()} | {len(pos) - len(bad & set(pos))}/{len(pos)} | "
             f"{len(neg) - len(bad & set(neg))}/{len(neg)} | {full_txt} | "
-            f"{sig_cov}/{len(spec_sigs)} | {kind_cov}/{len(spec_kinds)} | {estimate:.0%} |"
+            f"{sig_txt} | {non_mx_txt} | {kind_cov}/{len(spec_kinds)} | {estimate:.0%} |"
         )
         totals["pos"] += len(pos)
         totals["neg"] += len(neg)
         totals["bad"] += len(bad)
+        totals["sig"] += sig_cov
+        totals["spec_sig"] += len(spec_sigs)
+        totals["non_mx"] += len(sigs & non_mx)
+        totals["spec_non_mx"] += len(non_mx)
+        totals["kind"] += kind_cov
+        totals["spec_kind"] += len(spec_kinds)
 
     table = "\n".join(
         [
             "| Operator | Positive (pass/total) | ERROR_IF (pass/total) | Full suite (pass/total) "
-            "| Type signatures (tested/spec) | ERROR_IF kinds (tested/spec) | Coverage estimate |",
-            "|---|---|---|---|---|---|---|",
+            "| Type signatures (tested/spec) | Non-MX type signatures | ERROR_IF kinds (tested/spec) "
+            "| Coverage estimate |",
+            "|---|---|---|---|---|---|---|---|",
             *rows,
         ]
     )
-    summary = (
-        f"Checked-in suite: {totals['pos'] + totals['neg'] - totals['bad']}/{totals['pos'] + totals['neg']} "
-        f"cases pass ({totals['pos']} positive, {totals['neg']} ERROR_IF) across {len(ops)} operators."
+    lines = [
+        f"- Checked-in suite: {totals['pos'] + totals['neg'] - totals['bad']}/{totals['pos'] + totals['neg']} "
+        f"cases pass ({totals['pos']} positive, {totals['neg']} ERROR_IF) across {len(ops)} operators.",
+    ]
+    if totals["full"]:
+        lines.append(f"- Full suites: {totals['full'] - totals['full_bad']}/{totals['full']} cases pass.")
+    lines.append(
+        f"- Type signatures: {totals['sig']}/{totals['spec_sig']} of all, "
+        f"{totals['non_mx']}/{totals['spec_non_mx']} excluding MX; ERROR_IF kinds: "
+        f"{totals['kind']}/{totals['spec_kind']}."
     )
+    summary = "\n".join(lines)
     block = f"{BEGIN}\n{summary}\n\n{table}\n{END}"
     text = DOC.read_text(encoding="utf-8")
     if BEGIN not in text or END not in text:
         sys.exit(f"{DOC} lacks the {BEGIN} / {END} markers")
     head, rest = text.split(BEGIN, 1)
     _, tail = rest.split(END, 1)
-    DOC.write_text(head + block + tail, encoding="utf-8")
+    DOC.write_text(head + block + tail, encoding="utf-8", newline="\n")
     print(summary)
 
 

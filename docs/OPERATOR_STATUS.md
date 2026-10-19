@@ -53,9 +53,10 @@ graph through tosa-interp and compares the results.
 
 The generator emits thousands of cases per operator, so the checked-in suite
 (`tests/conformance`) is a sample: up to three positive cases per type
-signature (and per special-value variant), and up to three ERROR_IF cases per
-error kind, drawn from different type signatures. The complete suites can be
-built and run locally:
+signature (and per special-value variant; one for MATMUL and MATMUL_T, two
+for RESIZE, whose cases are large), and up to three ERROR_IF cases per error
+kind, drawn from different type signatures. The complete suites can be built
+and run locally:
 
 ```powershell
 .venv\Scripts\python scripts\gen_conformance.py --full --op conv2d
@@ -77,8 +78,10 @@ extensions, including MX:
 
 The estimate weights type signatures three to one against ERROR_IF kinds. It
 measures breadth (which combinations are exercised and match the reference),
-not the number of test values. Operators whose remaining gap is the MX
-extension show below 100%.
+not the number of test values. The specification's type lists include the MX
+formats, which tosa-interp does not implement, so operators with MX variants
+(CAST, CONCAT, CONV2D, MATMUL_T, RESHAPE, RESIZE, ROW_GATHER) show below 100%.
+The "Non-MX type signatures" column shows coverage of everything else.
 
 ## Summary
 
@@ -87,98 +90,102 @@ regenerating suites). "Full suite" is the complete generator output, run
 locally from `target/conformance-full`; `-` means it was not generated.
 
 <!-- BEGIN GENERATED -->
-Checked-in suite: 2783/2783 cases pass (1463 positive, 1320 ERROR_IF) across 88 operators.
+- Checked-in suite: 3057/3057 cases pass (1668 positive, 1389 ERROR_IF) across 90 operators.
+- Full suites: 77262/77262 cases pass.
+- Type signatures: 591/1224 of all, 589/589 excluding MX; ERROR_IF kinds: 468/468.
 
-| Operator | Positive (pass/total) | ERROR_IF (pass/total) | Full suite (pass/total) | Type signatures (tested/spec) | ERROR_IF kinds (tested/spec) | Coverage estimate |
-|---|---|---|---|---|---|---|
-| ABS | 15/15 | 6/6 | - | 5/5 | 2/2 | 100% |
-| ADD | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| ADD_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| ARGMAX | 48/48 | 21/21 | - | 16/16 | 7/7 | 100% |
-| ARITHMETIC_RIGHT_SHIFT | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| ASSERT_EQUAL_SHAPE | 3/3 | 12/12 | - | 1/1 | 4/4 | 100% |
-| AVG_POOL2D | 6/6 | 33/33 | - | 2/8 | 11/11 | 44% |
-| BITWISE_AND | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| BITWISE_NOT | 12/12 | 6/6 | - | 4/4 | 2/2 | 100% |
-| BITWISE_OR | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| BITWISE_XOR | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| CAST | 156/156 | 6/6 | - | 52/112 | 2/2 | 60% |
-| CEIL | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| CLAMP | 15/15 | 9/9 | - | 5/5 | 3/3 | 100% |
-| CLZ | 6/6 | 6/6 | - | 2/2 | 2/2 | 100% |
-| CONCAT | 30/30 | 21/21 | - | 10/16 | 7/7 | 72% |
-| CONCAT_SHAPE | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| COND_IF | 21/21 | 18/18 | - | 7/7 | 6/6 | 100% |
-| CONST | 36/36 | 0/0 | - | 12/12 | 0/0 | 100% |
-| CONST_SHAPE | 3/3 | 0/0 | - | 1/1 | 0/0 | 100% |
-| CONV2D | 117/117 | 33/33 | - | 39/448 | 11/11 | 32% |
-| CONV3D | 27/27 | 30/30 | - | 9/9 | 10/11 | 98% |
-| COS | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| DEPTHWISE_CONV2D | 27/27 | 30/30 | - | 9/9 | 10/11 | 98% |
-| DIM | 30/30 | 15/15 | - | 10/10 | 5/5 | 100% |
-| DIV_CEIL_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| DIV_FLOOR_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| EQUAL | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| ERF | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| EXP | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| EXP2_SHAPE | 1/1 | 15/15 | - | 1/1 | 5/5 | 100% |
-| FFT2D | 0/0 | 14/14 | - | 0/0 | 7/7 | 100% |
-| FLOOR | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| GATHER | 19/19 | 9/9 | - | 10/10 | 3/3 | 100% |
-| GREATER | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| GREATER_EQUAL | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| IDENTITY | 36/36 | 0/0 | - | 12/12 | 0/0 | 100% |
-| INTDIV | 6/6 | 15/15 | - | 2/2 | 5/5 | 100% |
-| LOG | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| LOG2_CEIL_SHAPE | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| LOG2_FLOOR_SHAPE | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| LOGICAL_AND | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| LOGICAL_LEFT_SHIFT | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| LOGICAL_NOT | 3/3 | 6/6 | - | 1/1 | 2/2 | 100% |
-| LOGICAL_OR | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| LOGICAL_RIGHT_SHIFT | 12/12 | 15/15 | - | 4/4 | 5/5 | 100% |
-| LOGICAL_XOR | 3/3 | 15/15 | - | 1/1 | 5/5 | 100% |
-| MATMUL | 14/14 | 12/12 | - | 14/14 | 4/4 | 100% |
-| MATMUL_T | 31/31 | 12/12 | - | 11/206 | 4/4 | 29% |
-| MAX_POOL2D | 21/21 | 27/27 | - | 7/7 | 9/9 | 100% |
-| MAX_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| MAXIMUM | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| MIN_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| MINIMUM | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| MOD_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| MUL | 21/21 | 18/18 | - | 7/7 | 6/6 | 100% |
-| MUL_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| NEGATE | 21/21 | 12/12 | - | 7/7 | 4/4 | 100% |
-| PAD | 30/30 | 18/18 | - | 10/10 | 6/6 | 100% |
-| POW | 9/9 | 15/15 | - | 3/3 | 5/5 | 100% |
-| RECIPROCAL | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| REDUCE_ALL | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| REDUCE_ANY | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| REDUCE_MAX | 21/21 | 18/18 | - | 7/7 | 6/6 | 100% |
-| REDUCE_MIN | 21/21 | 18/18 | - | 7/7 | 6/6 | 100% |
-| REDUCE_PRODUCT | 9/9 | 18/18 | - | 3/3 | 6/6 | 100% |
-| REDUCE_SUM | 6/6 | 18/18 | - | 2/4 | 6/6 | 62% |
-| RESCALE | 36/36 | 48/48 | - | 12/12 | 16/16 | 100% |
-| RESHAPE | 30/30 | 12/12 | - | 10/16 | 4/4 | 72% |
-| RESIZE | 18/18 | 45/45 | - | 9/15 | 15/15 | 70% |
-| REVERSE | 30/30 | 12/12 | - | 10/10 | 4/4 | 100% |
-| RFFT2D | 0/0 | 12/12 | - | 0/0 | 6/6 | 100% |
-| ROW_GATHER | 20/20 | 9/9 | - | 10/16 | 3/3 | 72% |
-| RSQRT | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| SCATTER | 19/19 | 9/9 | - | 10/10 | 3/3 | 100% |
-| SELECT | 24/24 | 15/15 | - | 8/8 | 5/5 | 100% |
-| SIGMOID | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| SIN | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| SLICE | 30/30 | 27/27 | - | 10/10 | 9/9 | 100% |
-| SLICE_SHAPE | 3/3 | 25/25 | - | 1/1 | 9/9 | 100% |
-| SUB | 15/15 | 15/15 | - | 5/5 | 5/5 | 100% |
-| SUB_SHAPE | 3/3 | 18/18 | - | 1/1 | 6/6 | 100% |
-| TABLE | 6/6 | 6/6 | - | 2/2 | 2/2 | 100% |
-| TANH | 9/9 | 6/6 | - | 3/3 | 2/2 | 100% |
-| TILE | 30/30 | 15/15 | - | 10/10 | 5/5 | 100% |
-| TRANSPOSE | 30/30 | 21/21 | - | 10/10 | 7/7 | 100% |
-| TRANSPOSE_CONV2D | 24/24 | 24/24 | - | 8/9 | 8/9 | 89% |
-| WHILE_LOOP | 18/18 | 18/18 | - | 6/6 | 6/6 | 100% |
+| Operator | Positive (pass/total) | ERROR_IF (pass/total) | Full suite (pass/total) | Type signatures (tested/spec) | Non-MX type signatures | ERROR_IF kinds (tested/spec) | Coverage estimate |
+|---|---|---|---|---|---|---|---|
+| ABS | 15/15 | 6/6 | 50/50 | 5/5 | 5/5 | 2/2 | 100% |
+| ADD | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| ADD_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| ARGMAX | 48/48 | 21/21 | 355/355 | 16/16 | 16/16 | 7/7 | 100% |
+| ARITHMETIC_RIGHT_SHIFT | 12/12 | 15/15 | 152/152 | 4/4 | 4/4 | 5/5 | 100% |
+| ASSERT_EQUAL_SHAPE | 3/3 | 12/12 | 29/29 | 1/1 | 1/1 | 4/4 | 100% |
+| AVG_POOL2D | 24/24 | 33/33 | 6419/6419 | 8/8 | 8/8 | 11/11 | 100% |
+| AVG_POOL2D_ADAPTIVE | 24/24 | 33/33 | 6378/6378 | 8/8 | 8/8 | 11/11 | 100% |
+| BITWISE_AND | 12/12 | 15/15 | 76/76 | 4/4 | 4/4 | 5/5 | 100% |
+| BITWISE_NOT | 12/12 | 6/6 | 40/40 | 4/4 | 4/4 | 2/2 | 100% |
+| BITWISE_OR | 12/12 | 15/15 | 76/76 | 4/4 | 4/4 | 5/5 | 100% |
+| BITWISE_XOR | 12/12 | 15/15 | 76/76 | 4/4 | 4/4 | 5/5 | 100% |
+| CAST | 156/156 | 6/6 | 520/520 | 52/112 | 52/52 | 2/2 | 60% |
+| CEIL | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| CLAMP | 15/15 | 9/9 | 60/60 | 5/5 | 5/5 | 3/3 | 100% |
+| CLZ | 6/6 | 6/6 | 20/20 | 2/2 | 2/2 | 2/2 | 100% |
+| CONCAT | 30/30 | 21/21 | 348/348 | 10/16 | 10/10 | 7/7 | 72% |
+| CONCAT_SHAPE | 3/3 | 15/15 | 108/108 | 1/1 | 1/1 | 5/5 | 100% |
+| COND_IF | 21/21 | 18/18 | 488/488 | 7/7 | 7/7 | 6/6 | 100% |
+| CONST | 36/36 | 0/0 | 48/48 | 12/12 | 12/12 | 0/0 | 100% |
+| CONST_SHAPE | 3/3 | 0/0 | 4/4 | 1/1 | 1/1 | 0/0 | 100% |
+| CONV2D | 192/192 | 33/33 | 15446/15446 | 64/448 | 64/64 | 11/11 | 36% |
+| CONV3D | 27/27 | 33/33 | 2721/2721 | 9/9 | 9/9 | 11/11 | 100% |
+| COS | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| DEPTHWISE_CONV2D | 27/27 | 33/33 | 7296/7296 | 9/9 | 9/9 | 11/11 | 100% |
+| DIM | 30/30 | 15/15 | 300/300 | 10/10 | 10/10 | 5/5 | 100% |
+| DIV_CEIL_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| DIV_FLOOR_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| EQUAL | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| ERF | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| EXP | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| EXP2_SHAPE | 1/1 | 15/15 | 16/16 | 1/1 | 1/1 | 5/5 | 100% |
+| FFT2D | 32/32 | 14/14 | 46/46 | 1/n/a | n/a | 7/7 | 100% |
+| FLOOR | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| GATHER | 19/19 | 9/9 | 49/49 | 10/10 | 10/10 | 3/3 | 100% |
+| GREATER | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| GREATER_EQUAL | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| IDENTITY | 36/36 | 0/0 | 48/48 | 12/12 | 12/12 | 0/0 | 100% |
+| INTDIV | 6/6 | 15/15 | 38/38 | 2/2 | 2/2 | 5/5 | 100% |
+| LOG | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| LOG2_CEIL_SHAPE | 3/3 | 15/15 | 19/19 | 1/1 | 1/1 | 5/5 | 100% |
+| LOG2_FLOOR_SHAPE | 3/3 | 15/15 | 19/19 | 1/1 | 1/1 | 5/5 | 100% |
+| LOGICAL_AND | 3/3 | 15/15 | 19/19 | 1/1 | 1/1 | 5/5 | 100% |
+| LOGICAL_LEFT_SHIFT | 12/12 | 15/15 | 76/76 | 4/4 | 4/4 | 5/5 | 100% |
+| LOGICAL_NOT | 3/3 | 6/6 | 10/10 | 1/1 | 1/1 | 2/2 | 100% |
+| LOGICAL_OR | 3/3 | 15/15 | 19/19 | 1/1 | 1/1 | 5/5 | 100% |
+| LOGICAL_RIGHT_SHIFT | 12/12 | 15/15 | 76/76 | 4/4 | 4/4 | 5/5 | 100% |
+| LOGICAL_XOR | 3/3 | 15/15 | 19/19 | 1/1 | 1/1 | 5/5 | 100% |
+| MATMUL | 14/14 | 12/12 | 113/113 | 14/14 | 14/14 | 4/4 | 100% |
+| MATMUL_T | 41/41 | 12/12 | 1228/1228 | 39/206 | 39/39 | 4/4 | 39% |
+| MAX_POOL2D | 21/21 | 27/27 | 7651/7651 | 7/7 | 7/7 | 9/9 | 100% |
+| MAX_POOL2D_ADAPTIVE | 21/21 | 27/27 | 7650/7650 | 7/7 | 7/7 | 9/9 | 100% |
+| MAX_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| MAXIMUM | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| MIN_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| MINIMUM | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| MOD_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| MUL | 21/21 | 18/18 | 238/238 | 7/7 | 7/7 | 6/6 | 100% |
+| MUL_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| NEGATE | 21/21 | 12/12 | 106/106 | 7/7 | 7/7 | 4/4 | 100% |
+| PAD | 30/30 | 18/18 | 4808/4808 | 10/10 | 10/10 | 6/6 | 100% |
+| POW | 9/9 | 15/15 | 69/69 | 3/3 | 3/3 | 5/5 | 100% |
+| RECIPROCAL | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| REDUCE_ALL | 3/3 | 18/18 | 37/37 | 1/1 | 1/1 | 6/6 | 100% |
+| REDUCE_ANY | 3/3 | 18/18 | 37/37 | 1/1 | 1/1 | 6/6 | 100% |
+| REDUCE_MAX | 21/21 | 18/18 | 259/259 | 7/7 | 7/7 | 6/6 | 100% |
+| REDUCE_MIN | 21/21 | 18/18 | 259/259 | 7/7 | 7/7 | 6/6 | 100% |
+| REDUCE_PRODUCT | 9/9 | 18/18 | 111/111 | 3/3 | 3/3 | 6/6 | 100% |
+| REDUCE_SUM | 12/12 | 18/18 | 191/191 | 4/4 | 4/4 | 6/6 | 100% |
+| RESCALE | 36/36 | 48/48 | 1658/1658 | 12/12 | 12/12 | 16/16 | 100% |
+| RESHAPE | 30/30 | 12/12 | 914/914 | 10/16 | 10/10 | 4/4 | 72% |
+| RESIZE | 18/18 | 45/45 | 723/723 | 9/15 | 9/9 | 15/15 | 70% |
+| REVERSE | 30/30 | 12/12 | 240/240 | 10/10 | 10/10 | 4/4 | 100% |
+| RFFT2D | 16/16 | 12/12 | 28/28 | 1/n/a | n/a | 6/6 | 100% |
+| ROW_GATHER | 20/20 | 9/9 | 80/80 | 10/16 | 10/10 | 3/3 | 72% |
+| RSQRT | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| SCATTER | 19/19 | 9/9 | 49/49 | 10/10 | 10/10 | 3/3 | 100% |
+| SELECT | 24/24 | 15/15 | 152/152 | 8/8 | 8/8 | 5/5 | 100% |
+| SIGMOID | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| SIN | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| SLICE | 30/30 | 27/27 | 1516/1516 | 10/10 | 10/10 | 9/9 | 100% |
+| SLICE_SHAPE | 3/3 | 25/25 | 76/76 | 1/1 | 1/1 | 9/9 | 100% |
+| SUB | 15/15 | 15/15 | 95/95 | 5/5 | 5/5 | 5/5 | 100% |
+| SUB_SHAPE | 3/3 | 18/18 | 22/22 | 1/1 | 1/1 | 6/6 | 100% |
+| TABLE | 6/6 | 6/6 | 20/20 | 2/2 | 2/2 | 2/2 | 100% |
+| TANH | 9/9 | 6/6 | 30/30 | 3/3 | 3/3 | 2/2 | 100% |
+| TILE | 30/30 | 15/15 | 680/680 | 10/10 | 10/10 | 5/5 | 100% |
+| TRANSPOSE | 30/30 | 21/21 | 760/760 | 10/10 | 10/10 | 7/7 | 100% |
+| TRANSPOSE_CONV2D | 27/27 | 27/27 | 4578/4578 | 9/9 | 9/9 | 9/9 | 100% |
+| WHILE_LOOP | 18/18 | 18/18 | 396/396 | 6/6 | 6/6 | 6/6 | 100% |
 <!-- END GENERATED -->
 
 ## Operator notes
@@ -260,8 +267,20 @@ Types are listed as `input -> output` (with accumulator where relevant).
 
 ## Known tosa-tools generator issues
 
-Two generator defects are worked around in `scripts/gen_conformance.py`:
+These generator behaviours are worked around in `scripts/gen_conformance.py`:
 
+- FFT2D and RFFT2D: the generator emits only ERROR_IF tests. Positive tests
+  are built by the script with the tosa-tools serializer (every
+  power-of-two edge size, forward and inverse, two value scales) and their
+  expected outputs still come from the reference model.
+- Float tests need sufficiently large dimensions for the generator's data
+  generation; with small `--tensor-dim-range` or `--target-shape` values it
+  silently emits integer tests only. Affected operators get extra generator
+  runs with larger shapes (see `OP_GEN_ARGS`).
+- Mixed-type operators (CONV2D, MATMUL_T) draw their type combination at
+  random per test, so a dedicated run enumerates every combination.
+- With a `--target-shape`, the convolutions emit no `WrongRank` ERROR_IF
+  tests; a negative-only run without a target shape adds them.
 - CONCAT: with size-1 dimensions the generator emits a zero-sized split, and
   its FP8 `ConcatInputDimMismatch` ERROR_IF test has a zero dimension, so
   CONCAT uses dimensions of at least 2 and FP8 gets positive tests only.

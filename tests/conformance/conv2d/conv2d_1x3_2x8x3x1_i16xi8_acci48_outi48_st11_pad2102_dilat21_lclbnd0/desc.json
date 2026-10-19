@@ -1,0 +1,125 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT16",
+     "shape": [
+      2,
+      8,
+      3,
+      1
+     ],
+     "input_pos": 0,
+     "op": "CONV2D",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 17380608785010687992,
+      "range": [
+       "-32768",
+       "32767"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT8",
+     "shape": [
+      3,
+      1,
+      3,
+      1
+     ],
+     "input_pos": 1,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 17380608785010687993,
+      "range": [
+       "-128",
+       "127"
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT48",
+     "shape": [
+      3
+     ],
+     "input_pos": 2,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 17380608785010687994,
+      "range": [
+       "-140737488355328",
+       "140737488355327"
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT16",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       -85.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "INT48",
+     "shape": [
+      2,
+      11,
+      3,
+      3
+     ]
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

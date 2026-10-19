@@ -100,6 +100,10 @@ OP_GEN_ARGS = {
         # with one kernel shape enumerates every mix cheaply.
         [*_FP_TYPES, "--target-shape", "1,6,7,16", "--conv-kernel", "3,3", "--max-conv-padding", "1",
          "--max-conv-dilation", "1", "--max-conv-stride", "1", "--test-type", "positive"],
+        # FP8 mixed with wider types; this seed's draw includes every combination.
+        ["--target-dtype", "fp8e4m3", "fp8e5m2", "--target-shape", "1,6,7,16", "--conv-kernel", "3,3", "2,2",
+         "1,1", "--max-conv-padding", "1", "--max-conv-dilation", "1", "--max-conv-stride", "1",
+         "--test-type", "positive", "--seed", "1"],
     ],
     "conv3d": [
         [*_INT_TYPES, "--target-shape", "2,3,4,3,2", "--tensor-dim-range", "1,8", *_CONV_LIMITS],
