@@ -105,6 +105,22 @@ impl Accumulator for AccF16UnroundedProduct {
     }
 }
 
+/// BF16 counterpart of [`AccF16UnroundedProduct`] (MATMUL_T with BF16 output).
+#[derive(Clone, Copy)]
+pub struct AccBf16UnroundedProduct(pub f32);
+
+impl Accumulator for AccBf16UnroundedProduct {
+    type Operand = f32;
+
+    fn zero() -> Self {
+        AccBf16UnroundedProduct(0.0)
+    }
+
+    fn mac(self, a: f32, b: f32) -> Self {
+        AccBf16UnroundedProduct(round_to(DType::Bf16, self.0 + a * b))
+    }
+}
+
 /// BF16 accumulator, held as an f32 that is always exactly representable in bf16.
 #[derive(Clone, Copy)]
 pub struct AccBf16(pub f32);

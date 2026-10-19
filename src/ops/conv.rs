@@ -429,12 +429,12 @@ fn eval_conv<L: ConvLoop>(
     }
 
     let (in_t, w_t, out_t) = (input.dtype(), weight.dtype(), bias.dtype());
-    if let Some(declared) = check_declared_output(state, name, output_name, &out_shape)? {
-        if declared != out_t {
-            return Err(Error::DTypeMismatch(format!(
-                "{name}: output dtype {declared:?} does not match bias dtype {out_t:?}"
-            )));
-        }
+    if let Some(declared) = check_declared_output(state, name, output_name, &out_shape)?
+        && declared != out_t
+    {
+        return Err(Error::DTypeMismatch(format!(
+            "{name}: output dtype {declared:?} does not match bias dtype {out_t:?}"
+        )));
     }
     if !types_ok(in_t, w_t, acc_t, out_t) {
         return Err(Error::DTypeMismatch(format!(

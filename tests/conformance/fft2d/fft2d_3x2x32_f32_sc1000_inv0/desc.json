@@ -1,0 +1,20 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0",
+  "input-1"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "result-0",
+  "result-1"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy",
+  "ref-result-1.npy"
+ ],
+ "expected_failure": false
+}

@@ -95,25 +95,50 @@ OP_GEN_ARGS = {
             "--max-conv-dilation", "2",
             "--max-conv-stride", "2",
             "--max-batch-size", "2",
-        ]
+        ],
+        # Each test draws its mixed float types at random; a 16-channel input
+        # with one kernel shape enumerates every mix cheaply.
+        [*_FP_TYPES, "--target-shape", "1,6,7,16", "--conv-kernel", "3,3", "--max-conv-padding", "1",
+         "--max-conv-dilation", "1", "--max-conv-stride", "1", "--test-type", "positive"],
     ],
     "conv3d": [
         [*_INT_TYPES, "--target-shape", "2,3,4,3,2", "--tensor-dim-range", "1,8", *_CONV_LIMITS],
         [*_FP_TYPES, "--target-shape", "1,4,5,6,3", "--tensor-dim-range", "1,8", *_CONV_LIMITS],
+        # Without a target shape, the generator also emits WrongRank tests.
+        ["--tensor-dim-range", "1,8", "--test-type", "negative", *_CONV_LIMITS],
     ],
     "depthwise_conv2d": [
         [*_INT_TYPES, "--target-shape", "2,5,6,2", "--tensor-dim-range", "1,10", *_CONV_LIMITS],
         [*_FP_TYPES, "--target-shape", "1,7,9,3", "--conv-kernel", "3,3", "1,2", *_CONV_LIMITS],
+        ["--tensor-dim-range", "1,10", "--test-type", "negative", *_CONV_LIMITS],
     ],
     "transpose_conv2d": [
         [*_INT_TYPES, "--target-shape", "2,4,3,2", "--tensor-dim-range", "1,10", "--max-conv-stride", "2"],
         [*_FP_TYPES, "--target-shape", "1,5,6,3", "--tensor-dim-range", "1,10", "--max-conv-stride", "2"],
+        ["--target-dtype", "bf16", "--target-shape", "1,5,6,3", "--max-conv-stride", "2", "--test-type", "positive"],
+        ["--tensor-dim-range", "1,10", "--test-type", "negative", "--max-conv-stride", "2"],
     ],
     # Float dot-product tests need the generator's default shapes.
     "matmul": [[]],
+    "matmul_t": [
+        [],
+        [*_FP_TYPES, "--tensor-dim-range", "7,24", "--test-type", "positive"],
+    ],
+    # Float data generation needs larger windows: 16 channels and pooling
+    # limits keep the float tests few and small.
     "avg_pool2d": [
         [*_INT_TYPES[:-1], "--tensor-dim-range", "1,16"],
-        [*_FP_TYPES, "--target-shape", "1,9,11,3", "2,6,7,2"],
+        [*_FP_TYPES, "--target-shape", "2,11,7,16", "--max-pooling-kernel", "3", "--max-pooling-stride", "2",
+         "--max-pooling-padding", "1", "--test-type", "positive"],
+    ],
+    "avg_pool2d_adaptive": [
+        [*_INT_TYPES[:-1], "--tensor-dim-range", "1,16"],
+        [*_FP_TYPES, "--target-shape", "2,11,7,16", "--max-pooling-kernel", "3", "--max-pooling-stride", "2",
+         "--max-pooling-padding", "1", "--test-type", "positive"],
+    ],
+    "reduce_sum": [
+        ["--tensor-dim-range", "1,16"],
+        ["--target-dtype", "fp32", "fp16", "bf16", "--test-type", "positive"],
     ],
     # Size-1 dimensions make the generator emit a zero-sized split, and its
     # FP8 ConcatInputDimMismatch ERROR_IF test has a zero dimension, so FP8
@@ -133,7 +158,82 @@ OP_GEN_ARGS = {
 
 # Per-operator cap on positive tests kept per sampling key, for operators
 # whose tests are large (the generator needs big shapes for them).
-OP_MAX_POSITIVE = {"matmul": 1, "resize": 2}
+OP_MAX_POSITIVE = {"matmul": 1, "matmul_t": 1, "resize": 2, "fft2d": -1, "rfft2d": -1}  # -1 keeps all
+
+
+def _write_custom_test(dest: Path, tosa: bytes, inputs: dict, outputs: list[str]) -> None:
+    """Write a test in the generator's layout; the reference model fills in the outputs."""
+    import numpy as np
+
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "test.tosa").write_bytes(tosa)
+    for name, value in inputs.items():
+        np.save(dest / f"{name}.npy", value)
+    desc = {
+        "tosa_file": "test.tosa",
+        "ifm_name": list(inputs),
+        "ifm_file": [f"{n}.npy" for n in inputs],
+        "ofm_name": outputs,
+        "ofm_file": [f"ref-{n}.npy" for n in outputs],
+        "expected_failure": False,
+    }
+    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n")
+
+
+def _fft_cases(seed: int):
+    """(name suffix, shape, scale) for FFT tests: every power-of-two edge size."""
+    rng = random.Random(seed)
+    shapes = [(1, 1, 1), (1, 1, 8), (1, 4, 1), (1, 2, 2), (2, 4, 8), (1, 8, 4), (1, 16, 16), (3, 2, 32)]
+    for shape in shapes:
+        for scale in (1.0, 1000.0):
+            yield f"{'x'.join(map(str, shape))}_f32_sc{int(scale)}", shape, scale, rng.randrange(1 << 32)
+
+
+def build_fft2d_tests(out: Path, seed: int) -> None:
+    """Positive FFT2D tests (the generator emits only ERROR_IF tests for it)."""
+    import numpy as np
+    import tosa_serializer as ts
+    from tosa.DType import DType
+    from tosa.Op import Op
+
+    for suffix, shape, scale, case_seed in _fft_cases(seed):
+        for inverse in (False, True):
+            name = f"fft2d_{suffix}_inv{int(inverse)}"
+            data = np.random.default_rng(case_seed).uniform(-scale, scale, (2, *shape)).astype(np.float32)
+            ser = ts.TosaSerializer(str(out / name))
+            re = ser.addPlaceholder(list(shape), DType.FP32, None)
+            im = ser.addPlaceholder(list(shape), DType.FP32, None)
+            out_re = ser.addOutput(list(shape), DType.FP32)
+            out_im = ser.addOutput(list(shape), DType.FP32)
+            attr = ts.TosaSerializerAttribute()
+            attr.FFT2dAttribute(inverse, False)
+            ser.addOperator(Op.FFT2D, [re.name, im.name], [out_re.name, out_im.name], attr)
+            _write_custom_test(out / name, ser.serialize(), {re.name: data[0], im.name: data[1]}, [out_re.name, out_im.name])
+
+
+def build_rfft2d_tests(out: Path, seed: int) -> None:
+    """Positive RFFT2D tests (the generator emits only ERROR_IF tests for it)."""
+    import numpy as np
+    import tosa_serializer as ts
+    from tosa.DType import DType
+    from tosa.Op import Op
+
+    for suffix, shape, scale, case_seed in _fft_cases(seed):
+        name = f"rfft2d_{suffix}"
+        data = np.random.default_rng(case_seed).uniform(-scale, scale, shape).astype(np.float32)
+        out_shape = [shape[0], shape[1], shape[2] // 2 + 1]
+        ser = ts.TosaSerializer(str(out / name))
+        x = ser.addPlaceholder(list(shape), DType.FP32, None)
+        out_re = ser.addOutput(out_shape, DType.FP32)
+        out_im = ser.addOutput(out_shape, DType.FP32)
+        attr = ts.TosaSerializerAttribute()
+        attr.RFFT2dAttribute(False)
+        ser.addOperator(Op.RFFT2D, [x.name], [out_re.name, out_im.name], attr)
+        _write_custom_test(out / name, ser.serialize(), {x.name: data}, [out_re.name, out_im.name])
+
+
+# Operators whose positive tests the generator does not produce; built here instead.
+CUSTOM_BUILDERS = {"fft2d": build_fft2d_tests, "rfft2d": build_rfft2d_tests}
 
 # Test-name tokens describing element types, e.g. ``i8xi4``, ``accf32``, ``outbf16``.
 _DTYPE = r"(?:bool|b|i\d+|u\d+|f\d+|bf16|f8e4m3|f8e5m2)"
@@ -281,6 +381,7 @@ def generate_op(args, op: str, ref_model: Path, generate_lib: Path) -> tuple[int
     if args.regenerate or not (gen_dir / ".complete").exists():
         if gen_dir.exists():
             shutil.rmtree(gen_dir)
+        gen_dir.mkdir(parents=True)
         runs = OP_GEN_ARGS.get(op, DEFAULT_GEN_ARGS)
         for i, run_args in enumerate(runs):
             out = gen_dir / str(i)
@@ -298,6 +399,8 @@ def generate_op(args, op: str, ref_model: Path, generate_lib: Path) -> tuple[int
             ]
             print("+", " ".join(cmd), flush=True)
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        if op in CUSTOM_BUILDERS:
+            CUSTOM_BUILDERS[op](gen_dir / "custom", args.seed)
         (gen_dir / ".complete").touch()
     else:
         print(f"{op}: reusing generator output in {gen_dir} (--regenerate to rebuild)", flush=True)

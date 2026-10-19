@@ -49,13 +49,13 @@ fn shape_operand(state: &InterpreterState, op: &str, name: &str) -> Result<Vec<i
 /// must have the element type of `dtype`.
 fn finish(state: &mut InterpreterState, op: &Operator, name: &str, shape: Vec<usize>, data: TensorData) -> Result<()> {
     let output = &op.outputs[0];
-    if let Some(declared) = check_declared_output(state, name, output, &shape)? {
-        if declared != data.dtype() {
-            return Err(Error::DTypeMismatch(format!(
-                "{name}: output dtype {declared:?} must match input dtype {:?}",
-                data.dtype()
-            )));
-        }
+    if let Some(declared) = check_declared_output(state, name, output, &shape)?
+        && declared != data.dtype()
+    {
+        return Err(Error::DTypeMismatch(format!(
+            "{name}: output dtype {declared:?} must match input dtype {:?}",
+            data.dtype()
+        )));
     }
     state.set_tensor(Tensor::new(output.clone(), shape, data));
     Ok(())
@@ -309,6 +309,44 @@ pub fn eval_gather(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     }
     let data = values.data.gather(&map);
     finish(state, op, OP, vec![n, w, c], data)
+}
+
+/// ROW_GATHER: values [N,K,C], indices [N,W], row_count [1] -> output
+/// [N, W*row_count, C], copying `row_count` consecutive rows from each index:
+/// `output[n, w*R + r, c] = values[n, indices[n,w] + r, c]`.
+pub fn eval_row_gather(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    const OP: &str = "ROW_GATHER";
+    expect_operands(op, OP, 3, 1)?;
+    let values = state.get_tensor(&op.inputs[0])?;
+    let indices = state.get_tensor(&op.inputs[1])?;
+    let row_count = state.get_tensor(&op.inputs[2])?;
+    expect_rank(OP, "values", values, 3)?;
+    expect_rank(OP, "indices", indices, 2)?;
+    expect_rank(OP, "row_count", row_count, 1)?;
+    let [n, k, c] = values.shape[..] else { unreachable!() };
+    let [ni, w] = indices.shape[..] else { unreachable!() };
+    if ni != n {
+        return Err(Error::ShapeMismatch(format!("{OP}: batch {ni} of indices != {n} of values")));
+    }
+    let rows = match int_values(&row_count.data).as_deref() {
+        Some(&[r]) if r >= 1 => r as usize,
+        _ => return Err(invalid(OP, "row_count must be a single positive integer")),
+    };
+    let idx = index_values(OP, indices)?;
+    let mut map = Vec::with_capacity(n * w * rows * c);
+    for b in 0..n {
+        for j in 0..w {
+            let start = idx[b * w + j];
+            if start < 0 || start as usize + rows > k {
+                return Err(invalid(OP, format!("rows {start}..{} out of range [0, {k})", start + rows as i64)));
+            }
+            for r in 0..rows {
+                map.extend((0..c).map(|ch| (b * k + start as usize + r) * c + ch));
+            }
+        }
+    }
+    let data = values.data.gather(&map);
+    finish(state, op, OP, vec![n, w * rows, c], data)
 }
 
 /// SCATTER: values_in [N,K,C], indices [N,W], input [N,W,C] -> values_out

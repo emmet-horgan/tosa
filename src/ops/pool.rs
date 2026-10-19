@@ -100,7 +100,10 @@ impl PoolGeometry {
     }
 }
 
-fn pool_attributes<'a>(op: &str, operator: &'a Operator) -> Result<(&'a [i32], &'a [i32], &'a [i32], DType, NanMode)> {
+/// Kernel, stride, pad, accumulator type and NaN mode of a pooling operator.
+type PoolAttributes<'a> = (&'a [i32], &'a [i32], &'a [i32], DType, NanMode);
+
+fn pool_attributes<'a>(op: &str, operator: &'a Operator) -> Result<PoolAttributes<'a>> {
     match &operator.attribute {
         OpAttribute::Pool2d { kernel, stride, pad, acc_type, nan_mode } => {
             Ok((kernel, stride, pad, *acc_type, *nan_mode))
@@ -119,17 +122,57 @@ fn check_output_dtype(op: &str, declared: Option<DType>, input: DType) -> Result
     }
 }
 
+/// Values of the SHAPE operand `index` of an adaptive pool.
+fn shape_attribute(state: &InterpreterState, op: &str, operator: &Operator, index: usize) -> Result<Vec<i32>> {
+    let t = state.get_tensor(&operator.inputs[index])?;
+    int_values(&t.data)
+        .and_then(|v| v.into_iter().map(|x| i32::try_from(x).ok()).collect())
+        .ok_or_else(|| invalid(op, "kernel, stride and pad must be SHAPE values"))
+}
+
+/// Kernel, stride and pad of an adaptive pool, from operands `first..first + 3`.
+fn adaptive_parameters(state: &InterpreterState, op: &str, operator: &Operator, first: usize) -> Result<[Vec<i32>; 3]> {
+    Ok([
+        shape_attribute(state, op, operator, first)?,
+        shape_attribute(state, op, operator, first + 1)?,
+        shape_attribute(state, op, operator, first + 2)?,
+    ])
+}
+
 pub fn eval_avg_pool2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     const OP: &str = "AVG_POOL2D";
     let (kernel, stride, pad, acc_t, _) = pool_attributes(OP, op)?;
     expect_operands(op, OP, 3, 1)?;
+    avg_pool(state, op, OP, kernel, stride, pad, acc_t)
+}
+
+/// AVG_POOL2D_ADAPTIVE: AVG_POOL2D with kernel, stride and pad given as SHAPE
+/// operands 3, 4 and 5.
+pub fn eval_avg_pool2d_adaptive(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    const OP: &str = "AVG_POOL2D_ADAPTIVE";
+    let (_, _, _, acc_t, _) = pool_attributes(OP, op)?;
+    expect_operands(op, OP, 6, 1)?;
+    let [kernel, stride, pad] = adaptive_parameters(state, OP, op, 3)?;
+    avg_pool(state, op, OP, &kernel, &stride, &pad, acc_t)
+}
+
+/// Average pooling of operand 0, with zero points in operands 1 and 2.
+fn avg_pool(
+    state: &mut InterpreterState,
+    op: &Operator,
+    name: &str,
+    kernel: &[i32],
+    stride: &[i32],
+    pad: &[i32],
+    acc_t: DType,
+) -> Result<()> {
     let input = state.get_tensor(&op.inputs[0])?;
-    let input_zp = single_value(OP, "input_zp", state.get_tensor(&op.inputs[1])?)?;
-    let output_zp = single_value(OP, "output_zp", state.get_tensor(&op.inputs[2])?)?;
-    let g = PoolGeometry::new(OP, input, kernel, stride, pad)?;
+    let input_zp = single_value(name, "input_zp", state.get_tensor(&op.inputs[1])?)?;
+    let output_zp = single_value(name, "output_zp", state.get_tensor(&op.inputs[2])?)?;
+    let g = PoolGeometry::new(name, input, kernel, stride, pad)?;
     let out_shape = g.out_shape();
     let in_t = input.dtype();
-    check_output_dtype(OP, check_declared_output(state, OP, &op.outputs[0], &out_shape)?, in_t)?;
+    check_output_dtype(name, check_declared_output(state, name, &op.outputs[0], &out_shape)?, in_t)?;
 
     use DType::*;
     let supported = matches!(
@@ -137,17 +180,17 @@ pub fn eval_avg_pool2d(state: &mut InterpreterState, op: &Operator) -> Result<()
         (I8 | I16, I32) | (F16, F16 | F32) | (Bf16, F32) | (F32, F32) | (Fp8E4M3 | Fp8E5M2, F16)
     );
     if !supported {
-        return Err(Error::DTypeMismatch(format!("{OP}: unsupported types input={in_t:?} acc={acc_t:?}")));
+        return Err(Error::DTypeMismatch(format!("{name}: unsupported types input={in_t:?} acc={acc_t:?}")));
     }
     if input_zp.dtype() != in_t || output_zp.dtype() != in_t {
-        return Err(Error::DTypeMismatch(format!("{OP}: zero points must have the input dtype {in_t:?}")));
+        return Err(Error::DTypeMismatch(format!("{name}: zero points must have the input dtype {in_t:?}")));
     }
 
     let output = if in_t.is_int() {
         let in_zp = int_values(&input_zp).unwrap()[0];
         let out_zp = int_values(&output_zp).unwrap()[0];
         if in_t != I8 && (in_zp != 0 || out_zp != 0) {
-            return Err(invalid(OP, "zero points must be zero for non-int8 data"));
+            return Err(invalid(name, "zero points must be zero for non-int8 data"));
         }
         let x = int_values(&input.data).unwrap();
         let (lo, hi) = int_range(in_t);
@@ -168,7 +211,7 @@ pub fn eval_avg_pool2d(state: &mut InterpreterState, op: &Operator) -> Result<()
     } else {
         let zp = [float_values(&input_zp).unwrap()[0], float_values(&output_zp).unwrap()[0]];
         if zp.iter().any(|&z| z != 0.0) {
-            return Err(invalid(OP, "zero points must be zero for floating-point data"));
+            return Err(invalid(name, "zero points must be zero for floating-point data"));
         }
         let x = float_values(&input.data).unwrap();
         let mut out = Vec::with_capacity(x.len());
@@ -187,12 +230,35 @@ pub fn eval_max_pool2d(state: &mut InterpreterState, op: &Operator) -> Result<()
     const OP: &str = "MAX_POOL2D";
     let (kernel, stride, pad, _, nan_mode) = pool_attributes(OP, op)?;
     expect_operands(op, OP, 1, 1)?;
-    let nan_mode = check_nan_mode(OP, nan_mode)?;
+    max_pool(state, op, OP, kernel, stride, pad, nan_mode)
+}
+
+/// MAX_POOL2D_ADAPTIVE: MAX_POOL2D with kernel, stride and pad given as SHAPE
+/// operands 1, 2 and 3.
+pub fn eval_max_pool2d_adaptive(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    const OP: &str = "MAX_POOL2D_ADAPTIVE";
+    let (_, _, _, _, nan_mode) = pool_attributes(OP, op)?;
+    expect_operands(op, OP, 4, 1)?;
+    let [kernel, stride, pad] = adaptive_parameters(state, OP, op, 1)?;
+    max_pool(state, op, OP, &kernel, &stride, &pad, nan_mode)
+}
+
+/// Max pooling of operand 0.
+fn max_pool(
+    state: &mut InterpreterState,
+    op: &Operator,
+    name: &str,
+    kernel: &[i32],
+    stride: &[i32],
+    pad: &[i32],
+    nan_mode: NanMode,
+) -> Result<()> {
+    let nan_mode = check_nan_mode(name, nan_mode)?;
     let input = state.get_tensor(&op.inputs[0])?;
-    let g = PoolGeometry::new(OP, input, kernel, stride, pad)?;
+    let g = PoolGeometry::new(name, input, kernel, stride, pad)?;
     let out_shape = g.out_shape();
     let in_t = input.dtype();
-    check_output_dtype(OP, check_declared_output(state, OP, &op.outputs[0], &out_shape)?, in_t)?;
+    check_output_dtype(name, check_declared_output(state, name, &op.outputs[0], &out_shape)?, in_t)?;
 
     use DType::*;
     let output = match in_t {
@@ -209,7 +275,7 @@ pub fn eval_max_pool2d(state: &mut InterpreterState, op: &Operator) -> Result<()
             g.for_each_window(|w| out.push(w.iter().fold(init, |m, &i| nan_max(m, x[i], nan_mode))));
             float_data(in_t, out)?
         }
-        other => return Err(Error::DTypeMismatch(format!("{OP}: unsupported dtype {other:?}"))),
+        other => return Err(Error::DTypeMismatch(format!("{name}: unsupported dtype {other:?}"))),
     };
     state.set_tensor(Tensor::new(op.outputs[0].clone(), out_shape, output));
     Ok(())

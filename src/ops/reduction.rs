@@ -68,10 +68,10 @@ fn eval_reduce(
         out_shape,
         nan_mode,
     };
-    if let Some(declared) = check_declared_output(state, name, &op.outputs[0], &r.out_shape)? {
-        if declared != dtype {
-            return Err(Error::DTypeMismatch(format!("{name}: output dtype {declared:?} must be {dtype:?}")));
-        }
+    if let Some(declared) = check_declared_output(state, name, &op.outputs[0], &r.out_shape)?
+        && declared != dtype
+    {
+        return Err(Error::DTypeMismatch(format!("{name}: output dtype {declared:?} must be {dtype:?}")));
     }
     let data = f(&r, &input.data)?;
     state.set_tensor(Tensor::new(op.outputs[0].clone(), r.out_shape, data));

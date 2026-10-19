@@ -518,6 +518,9 @@ pub enum OpAttribute {
     Dim {
         axis: i32,
     },
+    Fft2d {
+        inverse: bool,
+    },
     AssertEqualShape {
         allow_broadcast: bool,
     },
@@ -816,6 +819,34 @@ impl Graph {
             generated::Attribute::ReduceSumAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_sum_attribute() {
                     return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::Propagate };
+                }
+            }
+            generated::Attribute::FFT2dAttribute => {
+                if let Some(attr) = fb_op.attribute_as_fft2d_attribute() {
+                    return OpAttribute::Fft2d { inverse: attr.inverse() };
+                }
+            }
+            // Adaptive pools take kernel, stride and pad as SHAPE operands.
+            generated::Attribute::AvgPool2dAdaptiveAttribute => {
+                if let Some(attr) = fb_op.attribute_as_avg_pool_2d_adaptive_attribute() {
+                    return OpAttribute::Pool2d {
+                        kernel: vec![],
+                        stride: vec![],
+                        pad: vec![],
+                        acc_type: DType::from_fb(attr.acc_type()),
+                        nan_mode: NanMode::Propagate,
+                    };
+                }
+            }
+            generated::Attribute::MaxPool2dAdaptiveAttribute => {
+                if let Some(attr) = fb_op.attribute_as_max_pool_2d_adaptive_attribute() {
+                    return OpAttribute::Pool2d {
+                        kernel: vec![],
+                        stride: vec![],
+                        pad: vec![],
+                        acc_type: DType::Unknown,
+                        nan_mode: NanMode::from_fb(attr.nan_mode()),
+                    };
                 }
             }
             generated::Attribute::DimAttribute => {

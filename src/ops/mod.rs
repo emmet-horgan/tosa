@@ -5,6 +5,7 @@ pub mod conv;
 pub mod data_layout;
 pub mod data_nodes;
 pub mod elementwise;
+pub mod fft;
 pub mod math;
 pub mod matmul;
 pub mod pool;
@@ -96,6 +97,12 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::AvgPool2d => pool::eval_avg_pool2d(state, op),
         Op::MaxPool2d => pool::eval_max_pool2d(state, op),
         Op::ArgMax => pool::eval_argmax(state, op),
+        Op::AvgPool2dAdaptive => pool::eval_avg_pool2d_adaptive(state, op),
+        Op::MaxPool2dAdaptive => pool::eval_max_pool2d_adaptive(state, op),
+        Op::MatMulT => matmul::eval_matmul_t(state, op),
+        Op::RowGather => data_layout::eval_row_gather(state, op),
+        Op::Fft2d => fft::eval_fft2d(state, op),
+        Op::Rfft2d => fft::eval_rfft2d(state, op),
 
         // Type conversion
         Op::Cast => type_conv::eval_cast(state, op),
@@ -128,20 +135,14 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::Dim => shape_ops::eval_dim(state, op),
         Op::AssertEqualShape => shape_ops::eval_assert_equal_shape(state, op),
 
-        // Block-scaled, FFT, Custom — not yet fully implemented
+        // MX block-scaled operators (tosa-ext-mxfp), CUSTOM, and ARGMIN (not yet in the reference model)
         Op::MatMulTBlockScaled
         | Op::CastFromBlockScaled
         | Op::CastToBlockScaled
         | Op::Conv2dBlockScaled
         | Op::ReshapeBlockScaled
         | Op::RowGatherBlockScaled
-        | Op::AvgPool2dAdaptive
-        | Op::MaxPool2dAdaptive
-        | Op::Fft2d
-        | Op::Rfft2d
         | Op::Custom
-        | Op::RowGather
-        | Op::MatMulT
         | Op::ArgMin => Err(Error::UnsupportedOp(format!("{}", op.op.name()))),
 
         Op::Unknown(v) => Err(Error::UnsupportedOp(format!("op code {v}"))),

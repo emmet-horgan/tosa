@@ -117,13 +117,13 @@ fn expand_lane(l: Lane, shape: &[usize], out: &[usize]) -> Lane {
 /// Check the result against the graph's declaration and store it.
 fn finish(state: &mut InterpreterState, op: &Operator, name: &str, shape: Vec<usize>, data: TensorData) -> Result<()> {
     let output = &op.outputs[0];
-    if let Some(declared) = check_declared_output(state, name, output, &shape)? {
-        if declared != data.dtype() {
-            return Err(Error::DTypeMismatch(format!(
-                "{name}: output dtype {declared:?} should be {:?}",
-                data.dtype()
-            )));
-        }
+    if let Some(declared) = check_declared_output(state, name, output, &shape)?
+        && declared != data.dtype()
+    {
+        return Err(Error::DTypeMismatch(format!(
+            "{name}: output dtype {declared:?} should be {:?}",
+            data.dtype()
+        )));
     }
     state.set_tensor(Tensor::new(output.clone(), shape, data));
     Ok(())

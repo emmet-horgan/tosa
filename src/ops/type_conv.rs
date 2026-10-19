@@ -138,12 +138,9 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     if !scale32 && rounding_mode == RoundingMode::Double {
         return Err(invalid(OP, "double rounding requires scale32"));
     }
-    if (input_unsigned && output_unsigned)
-        || (input_unsigned && matches!(in_t, I32 | I48))
-        || (input_unsigned && out_t == I32)
-        || (output_unsigned && matches!(in_t, I32 | I48))
-        || (output_unsigned && out_t == I32)
-    {
+    // Unsigned data must be 8 or 16 bits wide, and only one side may be unsigned.
+    let has_32_bit_side = matches!(in_t, I32 | I48) || out_t == I32;
+    if (input_unsigned && output_unsigned) || ((input_unsigned || output_unsigned) && has_32_bit_side) {
         return Err(invalid(OP, "invalid combination of input_unsigned/output_unsigned and types"));
     }
     let expected_multiplier = if scale32 { I32 } else { I16 };

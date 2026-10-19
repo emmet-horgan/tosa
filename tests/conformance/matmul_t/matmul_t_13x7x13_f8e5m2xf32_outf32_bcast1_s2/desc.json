@@ -1,0 +1,111 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0",
+  "input-1"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP8E5M2",
+     "shape": [
+      13,
+      7,
+      13
+     ],
+     "input_pos": 0,
+     "op": "MATMUL_T",
+     "input_type": "VARIABLE",
+     "dot_product_info": {
+      "s": 2,
+      "ks": 13,
+      "out_type": "FP32",
+      "other_data_type": "FP32"
+     }
+    },
+    "input-1": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP32",
+     "shape": [
+      1,
+      20,
+      13
+     ],
+     "input_pos": 1,
+     "op": "MATMUL_T",
+     "input_type": "VARIABLE",
+     "dot_product_info": {
+      "s": 2,
+      "ks": 13,
+      "out_type": "FP32",
+      "other_data_type": "FP8E5M2"
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP8E5M2",
+     "shape": [
+      1
+     ],
+     "input_pos": 2,
+     "op": "MATMUL_T",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP32",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "MATMUL_T",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "DOT_PRODUCT",
+     "data_type": "FP32",
+     "shape": [
+      13,
+      7,
+      20
+     ],
+     "dot_product_info": {
+      "s": 2,
+      "ksb": 13,
+      "abs_bound": 26624,
+      "variance_error_bound": 21810380.8
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}
