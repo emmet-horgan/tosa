@@ -65,6 +65,9 @@ pub fn eval_resize(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let input = state.get_tensor(&op.inputs[0])?;
     expect_rank(OP, "input", input, 4)?;
     let [n, ih, iw, c] = input.shape[..] else { unreachable!() };
+    if ih == 0 || iw == 0 {
+        return Err(invalid(OP, "input height and width must be positive"));
+    }
 
     let [y_n, y_d, x_n, x_d] = scale[..] else { unreachable!() };
     if scale.iter().any(|&s| s <= 0) || y_n > 1 << 11 || x_n > 1 << 11 || y_d >= 16 * y_n || x_d >= 16 * x_n {
@@ -93,14 +96,16 @@ pub fn eval_resize(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     }
     let out_shape = vec![n, oh, ow, c];
     let in_t = input.dtype();
-    let out_t = check_declared_output(state, OP, &op.outputs[0], &out_shape)?.unwrap_or(in_t);
     use DType::*;
-    let types_ok = match (in_t, out_t) {
-        (I8, I8) | (I16, I16) | (F16, F16) | (Bf16, Bf16) | (F32, F32) | (Fp8E4M3, Fp8E4M3) | (Fp8E5M2, Fp8E5M2) => true,
-        (I8, I32) | (I16, I48) => mode == BILINEAR,
-        _ => false,
+    // Integer BILINEAR widens: INT8 -> INT32, INT16 -> INT48. Everything else keeps the type.
+    let expected_out = match (in_t, mode) {
+        (I8, BILINEAR) => I32,
+        (I16, BILINEAR) => I48,
+        (t, _) => t,
     };
-    if !types_ok || (in_t.is_int() && mode == NEAREST && in_t != out_t) {
+    let out_t = check_declared_output(state, OP, &op.outputs[0], &out_shape)?.unwrap_or(expected_out);
+    let supported = matches!(in_t, I8 | I16 | F16 | Bf16 | F32 | Fp8E4M3 | Fp8E5M2);
+    if !supported || out_t != expected_out {
         return Err(Error::DTypeMismatch(format!("{OP}: unsupported types {in_t:?} -> {out_t:?}")));
     }
 

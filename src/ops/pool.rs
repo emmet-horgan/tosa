@@ -43,6 +43,10 @@ impl PoolGeometry {
             return Err(invalid(op, format!("pad {pad:?} must be smaller than kernel {kernel:?}")));
         }
         let [n, ih, iw, c] = input.shape[..] else { unreachable!() };
+        if ih == 0 || iw == 0 {
+            // Every window must contain at least one input element.
+            return Err(invalid(op, "input height and width must be positive"));
+        }
         let extent = |size: usize, a: i32, b: i32, k: i32, s: i32| -> Result<usize> {
             let full = size as i64 + a as i64 + b as i64 - k as i64;
             if full < 0 || full % s as i64 != 0 {

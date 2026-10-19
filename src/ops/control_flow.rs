@@ -114,8 +114,8 @@ pub fn eval_while_loop(state: &mut InterpreterState, op: &Operator) -> Result<()
     let OpAttribute::WhileLoop { cond_graph, body_graph } = &op.attribute else {
         return Err(invalid(OP, "missing attribute"));
     };
-    if op.inputs.len() != op.outputs.len() {
-        return Err(invalid(OP, "the loop must have as many outputs as inputs"));
+    if op.inputs.is_empty() || op.inputs.len() != op.outputs.len() {
+        return Err(invalid(OP, "the loop needs at least one input and as many outputs as inputs"));
     }
     for (input, output) in op.inputs.iter().zip(&op.outputs) {
         if input_signature(state, input)? != output_signature(state, OP, output)? {

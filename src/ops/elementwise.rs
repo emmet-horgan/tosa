@@ -540,9 +540,10 @@ pub fn eval_mul(state: &mut InterpreterState, op: &Operator) -> Result<()> {
                 if !(0..=63).contains(&shift) {
                     return Err(invalid(OP, format!("shift {shift} out of range")));
                 }
+                // In i128: rounding (x * y) with shift 63 overflows i64.
                 let product = |x: i64, y: i64| {
-                    let p = x * y;
-                    if shift > 0 { (p + (1 << (shift - 1))) >> shift } else { p }
+                    let p = x as i128 * y as i128;
+                    if shift > 0 { (p + (1i128 << (shift - 1))) >> shift } else { p }
                 };
                 TensorData::I32(a.into_iter().zip(b).map(|(x, y)| product(x, y) as i32).collect())
             }

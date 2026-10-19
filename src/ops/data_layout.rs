@@ -212,7 +212,7 @@ pub fn eval_slice(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     }
     for d in 0..rank {
         let dim = input.shape[d] as i64;
-        if start[d] < 0 || start[d] >= dim || size[d] <= 0 || start[d] + size[d] > dim {
+        if start[d] < 0 || start[d] >= dim || size[d] <= 0 || size[d] > dim - start[d] {
             return Err(invalid(OP, format!("start {start:?} / size {size:?} out of bounds for {:?}", input.shape)));
         }
     }
