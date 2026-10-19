@@ -1,16 +1,18 @@
 pub mod accum;
-pub mod binary;
 pub mod common;
-pub mod comparison;
 pub mod control_flow;
-pub mod conv2d;
+pub mod conv;
 pub mod data_layout;
 pub mod data_nodes;
+pub mod elementwise;
+pub mod math;
+pub mod matmul;
+pub mod pool;
+pub mod quant;
 pub mod reduction;
+pub mod resize;
 pub mod shape_ops;
-pub mod tensor_ops;
 pub mod type_conv;
-pub mod unary;
 
 use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
@@ -27,47 +29,47 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::VariableWrite => data_nodes::eval_variable_write(state, op),
 
         // Binary element-wise
-        Op::Add => binary::eval_add(state, op),
-        Op::Sub => binary::eval_sub(state, op),
-        Op::Mul => binary::eval_mul(state, op),
-        Op::Maximum => binary::eval_maximum(state, op),
-        Op::Minimum => binary::eval_minimum(state, op),
-        Op::Pow => binary::eval_pow(state, op),
-        Op::ArithmeticRightShift => binary::eval_arithmetic_right_shift(state, op),
-        Op::Intdiv => binary::eval_intdiv(state, op),
-        Op::LogicalAnd => binary::eval_logical_and(state, op),
-        Op::LogicalOr => binary::eval_logical_or(state, op),
-        Op::LogicalXor => binary::eval_logical_xor(state, op),
-        Op::LogicalLeftShift => binary::eval_logical_left_shift(state, op),
-        Op::LogicalRightShift => binary::eval_logical_right_shift(state, op),
-        Op::BitwiseAnd => binary::eval_bitwise_and(state, op),
-        Op::BitwiseOr => binary::eval_bitwise_or(state, op),
-        Op::BitwiseXor => binary::eval_bitwise_xor(state, op),
+        Op::Add => elementwise::eval_add(state, op),
+        Op::Sub => elementwise::eval_sub(state, op),
+        Op::Mul => elementwise::eval_mul(state, op),
+        Op::Maximum => elementwise::eval_maximum(state, op),
+        Op::Minimum => elementwise::eval_minimum(state, op),
+        Op::Pow => elementwise::eval_pow(state, op),
+        Op::ArithmeticRightShift => elementwise::eval_arithmetic_right_shift(state, op),
+        Op::Intdiv => elementwise::eval_intdiv(state, op),
+        Op::LogicalAnd => elementwise::eval_logical_and(state, op),
+        Op::LogicalOr => elementwise::eval_logical_or(state, op),
+        Op::LogicalXor => elementwise::eval_logical_xor(state, op),
+        Op::LogicalLeftShift => elementwise::eval_logical_left_shift(state, op),
+        Op::LogicalRightShift => elementwise::eval_logical_right_shift(state, op),
+        Op::BitwiseAnd => elementwise::eval_bitwise_and(state, op),
+        Op::BitwiseOr => elementwise::eval_bitwise_or(state, op),
+        Op::BitwiseXor => elementwise::eval_bitwise_xor(state, op),
 
         // Unary element-wise
-        Op::Abs => unary::eval_abs(state, op),
-        Op::Negate => unary::eval_negate(state, op),
-        Op::Ceil => unary::eval_ceil(state, op),
-        Op::Floor => unary::eval_floor(state, op),
-        Op::Exp => unary::eval_exp(state, op),
-        Op::Log => unary::eval_log(state, op),
-        Op::Sin => unary::eval_sin(state, op),
-        Op::Cos => unary::eval_cos(state, op),
-        Op::Reciprocal => unary::eval_reciprocal(state, op),
-        Op::Rsqrt => unary::eval_rsqrt(state, op),
-        Op::Erf => unary::eval_erf(state, op),
-        Op::Sigmoid => unary::eval_sigmoid(state, op),
-        Op::Tanh => unary::eval_tanh(state, op),
-        Op::Clz => unary::eval_clz(state, op),
-        Op::BitwiseNot => unary::eval_bitwise_not(state, op),
-        Op::LogicalNot => unary::eval_logical_not(state, op),
-        Op::Clamp => unary::eval_clamp(state, op),
+        Op::Abs => elementwise::eval_abs(state, op),
+        Op::Negate => elementwise::eval_negate(state, op),
+        Op::Ceil => elementwise::eval_ceil(state, op),
+        Op::Floor => elementwise::eval_floor(state, op),
+        Op::Exp => elementwise::eval_exp(state, op),
+        Op::Log => elementwise::eval_log(state, op),
+        Op::Sin => elementwise::eval_sin(state, op),
+        Op::Cos => elementwise::eval_cos(state, op),
+        Op::Reciprocal => elementwise::eval_reciprocal(state, op),
+        Op::Rsqrt => elementwise::eval_rsqrt(state, op),
+        Op::Erf => elementwise::eval_erf(state, op),
+        Op::Sigmoid => elementwise::eval_sigmoid(state, op),
+        Op::Tanh => elementwise::eval_tanh(state, op),
+        Op::Clz => elementwise::eval_clz(state, op),
+        Op::BitwiseNot => elementwise::eval_bitwise_not(state, op),
+        Op::LogicalNot => elementwise::eval_logical_not(state, op),
+        Op::Clamp => elementwise::eval_clamp(state, op),
 
         // Comparison
-        Op::Equal => comparison::eval_equal(state, op),
-        Op::Greater => comparison::eval_greater(state, op),
-        Op::GreaterEqual => comparison::eval_greater_equal(state, op),
-        Op::Select => comparison::eval_select(state, op),
+        Op::Equal => elementwise::eval_equal(state, op),
+        Op::Greater => elementwise::eval_greater(state, op),
+        Op::GreaterEqual => elementwise::eval_greater_equal(state, op),
+        Op::Select => elementwise::eval_select(state, op),
 
         // Reduction
         Op::ReduceAll => reduction::eval_reduce_all(state, op),
@@ -89,11 +91,11 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::Scatter => data_layout::eval_scatter(state, op),
 
         // Tensor compute
-        Op::Conv2d => conv2d::eval_conv2d(state, op),
-        Op::MatMul => tensor_ops::eval_matmul(state, op),
-        Op::AvgPool2d => tensor_ops::eval_avg_pool2d(state, op),
-        Op::MaxPool2d => tensor_ops::eval_max_pool2d(state, op),
-        Op::ArgMax => tensor_ops::eval_argmax(state, op),
+        Op::Conv2d => conv::eval_conv2d(state, op),
+        Op::MatMul => matmul::eval_matmul(state, op),
+        Op::AvgPool2d => pool::eval_avg_pool2d(state, op),
+        Op::MaxPool2d => pool::eval_max_pool2d(state, op),
+        Op::ArgMax => pool::eval_argmax(state, op),
 
         // Type conversion
         Op::Cast => type_conv::eval_cast(state, op),
@@ -103,11 +105,11 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::CondIf => control_flow::eval_cond_if(state, op),
         Op::WhileLoop => control_flow::eval_while_loop(state, op),
 
-        Op::DepthwiseConv2d => tensor_ops::eval_depthwise_conv2d(state, op),
-        Op::TransposeConv2d => tensor_ops::eval_transpose_conv2d(state, op),
-        Op::Conv3d => tensor_ops::eval_conv3d(state, op),
-        Op::Table => tensor_ops::eval_table(state, op),
-        Op::Resize => tensor_ops::eval_resize(state, op),
+        Op::DepthwiseConv2d => conv::eval_depthwise_conv2d(state, op),
+        Op::TransposeConv2d => conv::eval_transpose_conv2d(state, op),
+        Op::Conv3d => conv::eval_conv3d(state, op),
+        Op::Table => elementwise::eval_table(state, op),
+        Op::Resize => resize::eval_resize(state, op),
 
         // Shape ops
         Op::AddShape => shape_ops::eval_add_shape(state, op),
@@ -126,10 +128,6 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::Dim => shape_ops::eval_dim(state, op),
         Op::AssertEqualShape => shape_ops::eval_assert_equal_shape(state, op),
 
-        // Adaptive pooling
-        Op::AvgPool2dAdaptive => tensor_ops::eval_avg_pool2d(state, op),
-        Op::MaxPool2dAdaptive => tensor_ops::eval_max_pool2d(state, op),
-
         // Block-scaled, FFT, Custom — not yet fully implemented
         Op::MatMulTBlockScaled
         | Op::CastFromBlockScaled
@@ -137,6 +135,8 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         | Op::Conv2dBlockScaled
         | Op::ReshapeBlockScaled
         | Op::RowGatherBlockScaled
+        | Op::AvgPool2dAdaptive
+        | Op::MaxPool2dAdaptive
         | Op::Fft2d
         | Op::Rfft2d
         | Op::Custom

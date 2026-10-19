@@ -108,12 +108,14 @@ def gen_abs_negate_f32():
 
     a_data = np.array([-1.0, 2.0, -3.0, 4.0], dtype=np.float32)
     a = ser.addConst([4], DType.FP32, a_data, "const_a")
+    zp_in = ser.addConst([1], DType.FP32, np.zeros(1, dtype=np.float32), "input1_zp")
+    zp_out = ser.addConst([1], DType.FP32, np.zeros(1, dtype=np.float32), "output_zp")
     neg = ser.addIntermediate([4], DType.FP32)
     out = ser.addOutput([4], DType.FP32)
 
     attr_neg = ts.TosaSerializerAttribute()
     attr_neg.NegateAttribute()
-    ser.addOperator(Op.NEGATE, [a.name], [neg.name], attr_neg)
+    ser.addOperator(Op.NEGATE, [a.name, zp_in.name, zp_out.name], [neg.name], attr_neg)
 
     attr_abs = ts.TosaSerializerAttribute()
     attr_abs.AbsAttribute()
@@ -129,11 +131,12 @@ def gen_reshape_f32():
 
     a_data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
     a = ser.addConst([2, 3], DType.FP32, a_data, "const_a")
+    new_shape = ser.addConst([2], DType.SHAPE, np.array([3, 2], dtype=np.int64), "new_shape")
     out = ser.addOutput([3, 2], DType.FP32)
 
     attr = ts.TosaSerializerAttribute()
     attr.ReshapeAttribute()
-    ser.addOperator(Op.RESHAPE, [a.name], [out.name], attr)
+    ser.addOperator(Op.RESHAPE, [a.name, new_shape.name], [out.name], attr)
 
     expected = a_data.reshape(3, 2)
     save_fixture("reshape_f32", ser.serialize(), {}, {out.name: expected})
@@ -183,13 +186,18 @@ def main():
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Generating fixtures in {FIXTURES_DIR}")
 
-    gen_const_add_f32()
-    gen_input_add_f32()
-    gen_sub_i32()
-    gen_abs_negate_f32()
-    gen_reshape_f32()
-    gen_broadcast_add_f32()
-    gen_mul_f32()
+    generators = {
+        "const_add_f32": gen_const_add_f32,
+        "input_add_f32": gen_input_add_f32,
+        "sub_i32": gen_sub_i32,
+        "abs_negate_f32": gen_abs_negate_f32,
+        "reshape_f32": gen_reshape_f32,
+        "broadcast_add_f32": gen_broadcast_add_f32,
+        "mul_f32": gen_mul_f32,
+    }
+    # Optionally regenerate only the fixtures named on the command line.
+    for name in sys.argv[1:] or generators:
+        generators[name]()
 
     print("Done! Generated fixtures:")
     for d in sorted(FIXTURES_DIR.iterdir()):

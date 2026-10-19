@@ -215,6 +215,46 @@ impl TensorData {
             _ => None,
         }
     }
+
+    /// Elements `self[indices[0]], self[indices[1]], ...`, for any dtype.
+    pub fn gather(&self, indices: &[usize]) -> TensorData {
+        macro_rules! pick {
+            ($($variant:ident),*) => {
+                match self {
+                    $(TensorData::$variant(v) => TensorData::$variant(indices.iter().map(|&i| v[i]).collect()),)*
+                }
+            };
+        }
+        pick!(Bool, I4, I8, I16, I32, I48, I64, Fp8E4M3, Fp8E5M2, F16, Bf16, F32, F64)
+    }
+
+    /// The elements of `parts`, which must share a dtype, one after another.
+    pub fn concat(parts: &[&TensorData]) -> Result<TensorData> {
+        let first = parts.first().ok_or_else(|| Error::GraphError("concat of no tensors".into()))?;
+        if let Some(p) = parts.iter().find(|p| p.dtype() != first.dtype()) {
+            return Err(Error::DTypeMismatch(format!(
+                "cannot concatenate {:?} with {:?}",
+                first.dtype(),
+                p.dtype()
+            )));
+        }
+        macro_rules! join {
+            ($($variant:ident),*) => {
+                match first {
+                    $(TensorData::$variant(_) => TensorData::$variant(
+                        parts
+                            .iter()
+                            .flat_map(|p| match p {
+                                TensorData::$variant(v) => v.iter().copied(),
+                                _ => unreachable!("dtypes checked above"),
+                            })
+                            .collect(),
+                    ),)*
+                }
+            };
+        }
+        Ok(join!(Bool, I4, I8, I16, I32, I48, I64, Fp8E4M3, Fp8E5M2, F16, Bf16, F32, F64))
+    }
 }
 
 #[derive(Debug, Clone)]

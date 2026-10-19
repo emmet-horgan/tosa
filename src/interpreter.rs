@@ -39,6 +39,11 @@ impl<'g> InterpreterState<'g> {
         self.tensor_defs.get(name).copied()
     }
 
+    /// A block (sub-graph) of the graph being executed, by block or region name.
+    pub fn find_block(&self, name: &str) -> Option<&'g BasicBlock> {
+        self.graph.find_block(name)
+    }
+
     pub fn eval_sub_block(
         &mut self,
         block_name: &str,
@@ -156,11 +161,23 @@ impl Interpreter {
     }
 }
 
+/// Highest tensor rank supported, as in the reference model (TOSA level
+/// 8K's MAX_RANK).
+pub const MAX_RANK: usize = 6;
+
 fn execute_block_inner(
     state: &mut InterpreterState,
     hook: &mut dyn InterpreterHook,
 ) -> Result<()> {
     let block = state.block;
+
+    if let Some(t) = block.tensors.iter().find(|t| t.dtype != crate::ir::DType::Shape && t.shape.len() > MAX_RANK) {
+        return Err(Error::ShapeMismatch(format!(
+            "tensor '{}' has rank {}, above the maximum of {MAX_RANK}",
+            t.name,
+            t.shape.len()
+        )));
+    }
 
     // Build producer map: output_tensor_name → op_index
     let mut producer_map: HashMap<&str, usize> = HashMap::new();

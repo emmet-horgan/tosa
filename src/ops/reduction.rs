@@ -1,302 +1,140 @@
-use crate::broadcast::flat_to_nd;
+//! REDUCE_ALL, REDUCE_ANY, REDUCE_MAX, REDUCE_MIN, REDUCE_PRODUCT and
+//! REDUCE_SUM along one axis; the output keeps the input rank with the
+//! reduced dimension set to 1.
+//!
+//! Accumulation follows the reference model: elements are combined in index
+//! order; FP16 sums and FP16/BF16 products are rounded to the element type at
+//! every step, while BF16 sums accumulate in FP32 and are rounded once.
+
 use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
-use crate::ir::{OpAttribute, Operator};
+use crate::ir::{DType, NanMode, OpAttribute, Operator};
+use crate::ops::common::{
+    check_declared_output, check_nan_mode, expect_operands, float_data, float_highest, float_lowest,
+    float_values, int_data, int_range, int_values, invalid, nan_max, nan_min, round_to,
+};
 use crate::tensor::{Tensor, TensorData};
 
-/// Compute the output shape for a reduction: input shape with the reduced axis set to 1 (kept).
-fn reduce_output_shape(input_shape: &[usize], axis: usize) -> Vec<usize> {
-    let mut out_shape = input_shape.to_vec();
-    if axis < out_shape.len() {
-        out_shape[axis] = 1;
-    }
-    out_shape
+struct Reduction {
+    dtype: DType,
+    out_shape: Vec<usize>,
+    outer: usize,
+    len: usize,
+    inner: usize,
+    nan_mode: NanMode,
 }
 
-/// Extract the axis from the op attribute, returning it as a usize.
-fn get_reduce_axis(op: &Operator, input_rank: usize) -> Result<usize> {
-    let axis_i32 = match &op.attribute {
-        OpAttribute::Reduce { axis } => *axis,
-        _ => {
-            return Err(Error::ShapeMismatch(
-                "reduction op missing Reduce attribute".to_string(),
-            ));
+impl Reduction {
+    /// Combine the `len` elements of each reduction run with `f`, starting from `init`.
+    fn fold<T: Copy>(&self, v: &[T], init: T, f: impl Fn(T, T) -> T) -> Vec<T> {
+        let mut out = Vec::with_capacity(self.outer * self.inner);
+        for o in 0..self.outer {
+            for i in 0..self.inner {
+                out.push((0..self.len).fold(init, |acc, a| f(acc, v[(o * self.len + a) * self.inner + i])));
+            }
         }
-    };
-    let axis = if axis_i32 < 0 {
-        (input_rank as i32 + axis_i32) as usize
-    } else {
-        axis_i32 as usize
-    };
-    if axis >= input_rank {
-        return Err(Error::ShapeMismatch(format!(
-            "reduction axis {} out of range for rank {}",
-            axis, input_rank
-        )));
+        out
     }
-    Ok(axis)
 }
 
-/// Maps a flat index in the output to the range of flat indices in the input that
-/// contribute to this output element, yielding each input flat index in turn.
-/// This iterates along the reduced axis.
-fn reduce_iterate<'a>(
-    out_flat: usize,
-    out_shape: &'a [usize],
-    input_shape: &'a [usize],
-    axis: usize,
-) -> impl Iterator<Item = usize> + 'a {
-    let nd = flat_to_nd(out_flat, out_shape);
-    let axis_len = input_shape[axis];
-    (0..axis_len).map(move |k| {
-        // Compute flat index into input
-        let mut flat = 0usize;
-        let mut stride = 1usize;
-        for dim in (0..input_shape.len()).rev() {
-            let idx = if dim == axis { k } else { nd[dim] };
-            flat += idx * stride;
-            stride *= input_shape[dim];
+fn eval_reduce(
+    state: &mut InterpreterState,
+    op: &Operator,
+    name: &str,
+    allowed: &[DType],
+    f: impl FnOnce(&Reduction, &TensorData) -> Result<TensorData>,
+) -> Result<()> {
+    let OpAttribute::Reduce { axis, nan_mode } = op.attribute else {
+        return Err(invalid(name, "missing attribute"));
+    };
+    expect_operands(op, name, 1, 1)?;
+    let input = state.get_tensor(&op.inputs[0])?;
+    let dtype = input.dtype();
+    if !allowed.contains(&dtype) {
+        return Err(Error::DTypeMismatch(format!("{name}: unsupported dtype {dtype:?}")));
+    }
+    let rank = input.shape.len();
+    if rank == 0 || axis < 0 || axis as usize >= rank {
+        return Err(invalid(name, format!("axis {axis} out of range for rank {rank}")));
+    }
+    let axis = axis as usize;
+    let mut out_shape = input.shape.clone();
+    out_shape[axis] = 1;
+    let r = Reduction {
+        dtype,
+        outer: input.shape[..axis].iter().product(),
+        len: input.shape[axis],
+        inner: input.shape[axis + 1..].iter().product(),
+        out_shape,
+        nan_mode,
+    };
+    if let Some(declared) = check_declared_output(state, name, &op.outputs[0], &r.out_shape)? {
+        if declared != dtype {
+            return Err(Error::DTypeMismatch(format!("{name}: output dtype {declared:?} must be {dtype:?}")));
         }
-        flat
+    }
+    let data = f(&r, &input.data)?;
+    state.set_tensor(Tensor::new(op.outputs[0].clone(), r.out_shape, data));
+    Ok(())
+}
+
+const MINMAX: &[DType] = &[DType::F16, DType::Bf16, DType::F32, DType::I8, DType::I16, DType::I32, DType::I64];
+
+pub fn eval_reduce_all(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    eval_reduce(state, op, "REDUCE_ALL", &[DType::Bool], |r, d| match d {
+        TensorData::Bool(v) => Ok(TensorData::Bool(r.fold(v, true, |a, b| a && b))),
+        _ => unreachable!(),
     })
 }
 
-/// Macro to implement a numeric reduction across F32, I32, I8, I16, I64 dtypes.
-macro_rules! reduce_numeric {
-    ($state:expr, $op:expr, $op_name:expr, $init:expr, $fold:expr, $finalize:expr) => {{
-        let input = $state.get_tensor(&$op.inputs[0])?;
-        let axis = get_reduce_axis($op, input.shape.len())?;
-        let out_shape = reduce_output_shape(&input.shape, axis);
-        let out_count: usize = out_shape.iter().product::<usize>().max(1);
-        let output_name = &$op.outputs[0];
-        let axis_len = input.shape[axis];
-
-        let data = match &input.data {
-            TensorData::F32(v) => {
-                let init_fn = $init;
-                let fold_fn = $fold;
-                let finalize_fn = $finalize;
-                let mut result = Vec::with_capacity(out_count);
-                for out_flat in 0..out_count {
-                    let mut acc: f64 = init_fn(v[0] as f64);
-                    let mut first = true;
-                    for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-                        let val = v[in_flat] as f64;
-                        if first {
-                            acc = init_fn(val);
-                            first = false;
-                        } else {
-                            acc = fold_fn(acc, val);
-                        }
-                    }
-                    result.push(finalize_fn(acc, axis_len) as f32);
-                }
-                TensorData::F32(result)
-            }
-            TensorData::I32(v) => {
-                let init_fn = $init;
-                let fold_fn = $fold;
-                let finalize_fn = $finalize;
-                let mut result = Vec::with_capacity(out_count);
-                for out_flat in 0..out_count {
-                    let mut acc: f64 = init_fn(v[0] as f64);
-                    let mut first = true;
-                    for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-                        let val = v[in_flat] as f64;
-                        if first {
-                            acc = init_fn(val);
-                            first = false;
-                        } else {
-                            acc = fold_fn(acc, val);
-                        }
-                    }
-                    result.push(finalize_fn(acc, axis_len) as i32);
-                }
-                TensorData::I32(result)
-            }
-            TensorData::I8(v) => {
-                let init_fn = $init;
-                let fold_fn = $fold;
-                let finalize_fn = $finalize;
-                let mut result = Vec::with_capacity(out_count);
-                for out_flat in 0..out_count {
-                    let mut acc: f64 = init_fn(v[0] as f64);
-                    let mut first = true;
-                    for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-                        let val = v[in_flat] as f64;
-                        if first {
-                            acc = init_fn(val);
-                            first = false;
-                        } else {
-                            acc = fold_fn(acc, val);
-                        }
-                    }
-                    result.push(finalize_fn(acc, axis_len) as i8);
-                }
-                TensorData::I8(result)
-            }
-            TensorData::I16(v) => {
-                let init_fn = $init;
-                let fold_fn = $fold;
-                let finalize_fn = $finalize;
-                let mut result = Vec::with_capacity(out_count);
-                for out_flat in 0..out_count {
-                    let mut acc: f64 = init_fn(v[0] as f64);
-                    let mut first = true;
-                    for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-                        let val = v[in_flat] as f64;
-                        if first {
-                            acc = init_fn(val);
-                            first = false;
-                        } else {
-                            acc = fold_fn(acc, val);
-                        }
-                    }
-                    result.push(finalize_fn(acc, axis_len) as i16);
-                }
-                TensorData::I16(result)
-            }
-            TensorData::I64(v) => {
-                let init_fn = $init;
-                let fold_fn = $fold;
-                let finalize_fn = $finalize;
-                let mut result = Vec::with_capacity(out_count);
-                for out_flat in 0..out_count {
-                    let mut acc: f64 = init_fn(v[0] as f64);
-                    let mut first = true;
-                    for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-                        let val = v[in_flat] as f64;
-                        if first {
-                            acc = init_fn(val);
-                            first = false;
-                        } else {
-                            acc = fold_fn(acc, val);
-                        }
-                    }
-                    result.push(finalize_fn(acc, axis_len) as i64);
-                }
-                TensorData::I64(result)
-            }
-            _ => {
-                return Err(Error::DTypeMismatch(format!(
-                    "{}: unsupported dtype {:?}",
-                    $op_name,
-                    input.data.dtype()
-                )));
-            }
-        };
-
-        $state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
-        Ok(())
-    }};
-}
-
-pub fn eval_reduce_sum(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    reduce_numeric!(
-        state,
-        op,
-        "REDUCE_SUM",
-        |v: f64| v,
-        |acc: f64, v: f64| acc + v,
-        |acc: f64, _axis_len: usize| acc
-    )
+pub fn eval_reduce_any(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    eval_reduce(state, op, "REDUCE_ANY", &[DType::Bool], |r, d| match d {
+        TensorData::Bool(v) => Ok(TensorData::Bool(r.fold(v, false, |a, b| a || b))),
+        _ => unreachable!(),
+    })
 }
 
 pub fn eval_reduce_max(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    reduce_numeric!(
-        state,
-        op,
-        "REDUCE_MAX",
-        |v: f64| v,
-        |acc: f64, v: f64| if v > acc { v } else { acc },
-        |acc: f64, _axis_len: usize| acc
-    )
+    const OP: &str = "REDUCE_MAX";
+    eval_reduce(state, op, OP, MINMAX, |r, d| {
+        let mode = check_nan_mode(OP, r.nan_mode)?;
+        if let Some(v) = int_values(d) {
+            return int_data(r.dtype, r.fold(&v, int_range(r.dtype).0, i64::max));
+        }
+        let init = if mode == NanMode::Ignore { f32::NAN } else { float_lowest(r.dtype) };
+        float_data(r.dtype, r.fold(&float_values(d).unwrap(), init, |a, b| nan_max(a, b, mode)))
+    })
 }
 
 pub fn eval_reduce_min(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    reduce_numeric!(
-        state,
-        op,
-        "REDUCE_MIN",
-        |v: f64| v,
-        |acc: f64, v: f64| if v < acc { v } else { acc },
-        |acc: f64, _axis_len: usize| acc
-    )
+    const OP: &str = "REDUCE_MIN";
+    eval_reduce(state, op, OP, MINMAX, |r, d| {
+        let mode = check_nan_mode(OP, r.nan_mode)?;
+        if let Some(v) = int_values(d) {
+            return int_data(r.dtype, r.fold(&v, int_range(r.dtype).1, i64::min));
+        }
+        let init = if mode == NanMode::Ignore { f32::NAN } else { float_highest(r.dtype) };
+        float_data(r.dtype, r.fold(&float_values(d).unwrap(), init, |a, b| nan_min(a, b, mode)))
+    })
 }
 
 pub fn eval_reduce_product(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    reduce_numeric!(
-        state,
-        op,
-        "REDUCE_PRODUCT",
-        |v: f64| v,
-        |acc: f64, v: f64| acc * v,
-        |acc: f64, _axis_len: usize| acc
-    )
+    eval_reduce(state, op, "REDUCE_PRODUCT", &[DType::F16, DType::Bf16, DType::F32], |r, d| {
+        let dt = r.dtype;
+        float_data(dt, r.fold(&float_values(d).unwrap(), 1.0, |a, b| round_to(dt, a * b)))
+    })
 }
 
-/// REDUCE_ALL: logical AND along axis. Input and output are Bool.
-pub fn eval_reduce_all(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    let input = state.get_tensor(&op.inputs[0])?;
-    let axis = get_reduce_axis(op, input.shape.len())?;
-    let out_shape = reduce_output_shape(&input.shape, axis);
-    let out_count: usize = out_shape.iter().product::<usize>().max(1);
-    let output_name = &op.outputs[0];
-
-    let v = input
-        .data
-        .as_bool_slice()
-        .ok_or_else(|| Error::DTypeMismatch("REDUCE_ALL: input must be Bool".to_string()))?;
-
-    let mut result = Vec::with_capacity(out_count);
-    for out_flat in 0..out_count {
-        let mut acc = true;
-        for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-            if !v[in_flat] {
-                acc = false;
-                break;
-            }
+pub fn eval_reduce_sum(state: &mut InterpreterState, op: &Operator) -> Result<()> {
+    let allowed = [DType::F16, DType::Bf16, DType::F32, DType::I32, DType::I64];
+    eval_reduce(state, op, "REDUCE_SUM", &allowed, |r, d| {
+        if let Some(v) = int_values(d) {
+            let dt = r.dtype;
+            let wrap = |x: i64| if dt == DType::I32 { x as i32 as i64 } else { x };
+            return int_data(dt, r.fold(&v, 0, |a, b| wrap(a.wrapping_add(b))));
         }
-        result.push(acc);
-    }
-
-    state.set_tensor(Tensor::new(
-        output_name.clone(),
-        out_shape,
-        TensorData::Bool(result),
-    ));
-    Ok(())
-}
-
-/// REDUCE_ANY: logical OR along axis. Input and output are Bool.
-pub fn eval_reduce_any(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    let input = state.get_tensor(&op.inputs[0])?;
-    let axis = get_reduce_axis(op, input.shape.len())?;
-    let out_shape = reduce_output_shape(&input.shape, axis);
-    let out_count: usize = out_shape.iter().product::<usize>().max(1);
-    let output_name = &op.outputs[0];
-
-    let v = input
-        .data
-        .as_bool_slice()
-        .ok_or_else(|| Error::DTypeMismatch("REDUCE_ANY: input must be Bool".to_string()))?;
-
-    let mut result = Vec::with_capacity(out_count);
-    for out_flat in 0..out_count {
-        let mut acc = false;
-        for in_flat in reduce_iterate(out_flat, &out_shape, &input.shape, axis) {
-            if v[in_flat] {
-                acc = true;
-                break;
-            }
-        }
-        result.push(acc);
-    }
-
-    state.set_tensor(Tensor::new(
-        output_name.clone(),
-        out_shape,
-        TensorData::Bool(result),
-    ));
-    Ok(())
+        // FP16 accumulates in FP16; BF16 and FP32 in FP32.
+        let acc_t = if r.dtype == DType::F16 { DType::F16 } else { DType::F32 };
+        float_data(r.dtype, r.fold(&float_values(d).unwrap(), 0.0, |a, b| round_to(acc_t, a + b)))
+    })
 }

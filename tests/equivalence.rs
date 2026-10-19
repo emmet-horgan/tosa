@@ -194,13 +194,26 @@ fn run_single_fixture(fixture_dir: &Path) {
         serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
 
     let graph_data = std::fs::read(fixture_dir.join("graph.tosa")).unwrap();
+    let graph = tosa_interp::Graph::from_flatbuffer(&graph_data).unwrap();
+    let dtypes: HashMap<&str, tosa_interp::DType> = graph
+        .main_block()
+        .map(|b| b.tensors.iter().map(|t| (t.name.as_str(), t.dtype)).collect())
+        .unwrap_or_default();
 
-    // Load inputs
+    // Load inputs in the element types the graph declares for them.
     let mut inputs = HashMap::new();
     for (i, name) in meta.input_names.iter().enumerate() {
         let npy_path = fixture_dir.join(format!("input_{i}.npy"));
         if npy_path.exists() {
-            inputs.insert(name.clone(), load_npy_as_tensor(&npy_path, name));
+            let tensor = match dtypes.get(name.as_str()) {
+                Some(&dtype) => {
+                    let arr = tosa_interp::npy::read(&npy_path).unwrap();
+                    let data = arr.to_tensor_data(dtype).unwrap();
+                    Tensor::new(name.clone(), arr.shape, data)
+                }
+                None => load_npy_as_tensor(&npy_path, name),
+            };
+            inputs.insert(name.clone(), tensor);
         }
     }
 

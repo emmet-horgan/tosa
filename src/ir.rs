@@ -78,6 +78,50 @@ impl DType {
     }
 }
 
+/// RESCALE rounding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundingMode {
+    /// Round half up once.
+    Single,
+    /// Round half up, with an extra rounding step for shifts above 31.
+    Double,
+    /// Implementation-defined; the reference evaluates it in FP32.
+    Inexact,
+    Unknown,
+}
+
+impl RoundingMode {
+    fn from_fb(m: generated::RoundingMode) -> Self {
+        match m {
+            generated::RoundingMode::SINGLE_ROUND => RoundingMode::Single,
+            generated::RoundingMode::DOUBLE_ROUND => RoundingMode::Double,
+            generated::RoundingMode::INEXACT_ROUND => RoundingMode::Inexact,
+            _ => RoundingMode::Unknown,
+        }
+    }
+}
+
+/// NaN handling of min/max style operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NanMode {
+    /// Any NaN operand makes the result NaN.
+    Propagate,
+    /// NaN operands are ignored unless every operand is NaN.
+    Ignore,
+    /// Missing or unrecognised in the graph; rejected by operators that use it.
+    Unknown,
+}
+
+impl NanMode {
+    fn from_fb(m: generated::NanPropagationMode) -> Self {
+        match m {
+            generated::NanPropagationMode::PROPAGATE => NanMode::Propagate,
+            generated::NanPropagationMode::IGNORE => NanMode::Ignore,
+            _ => NanMode::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Op {
     // Data nodes
@@ -457,12 +501,29 @@ pub enum OpAttribute {
         kernel: Vec<i32>,
         stride: Vec<i32>,
         pad: Vec<i32>,
+        /// AVG_POOL2D only (`Unknown` for MAX_POOL2D).
+        acc_type: DType,
+        /// MAX_POOL2D only (`Propagate` for AVG_POOL2D).
+        nan_mode: NanMode,
     },
     ArgMax {
         axis: i32,
+        nan_mode: NanMode,
     },
     Reduce {
         axis: i32,
+        /// REDUCE_MAX / REDUCE_MIN only (`Propagate` otherwise).
+        nan_mode: NanMode,
+    },
+    Dim {
+        axis: i32,
+    },
+    AssertEqualShape {
+        allow_broadcast: bool,
+    },
+    /// MAXIMUM / MINIMUM.
+    NanPropagation {
+        nan_mode: NanMode,
     },
     Concat {
         axis: i32,
@@ -473,12 +534,14 @@ pub enum OpAttribute {
     Clamp {
         min_val: Vec<u8>,
         max_val: Vec<u8>,
+        nan_mode: NanMode,
     },
     ArithmeticRightShift {
         round: bool,
     },
     Rescale {
         scale32: bool,
+        rounding_mode: RoundingMode,
         per_channel: bool,
         input_unsigned: bool,
         output_unsigned: bool,
@@ -588,9 +651,10 @@ impl Graph {
                 let rank = fb_shape.rank() as i32;
                 let data = fb_shape.data().map(|d| d.bytes().to_vec());
 
+                // A SHAPE value of rank r is a list of r dimensions.
                 tensors.push(TensorDef {
                     name: shape_name,
-                    shape: if rank > 0 { vec![rank] } else { vec![] },
+                    shape: vec![rank],
                     dtype: DType::Shape,
                     data,
                     is_variable: false,
@@ -703,6 +767,8 @@ impl Graph {
                         kernel: attr.kernel().map(|v| v.iter().collect()).unwrap_or_default(),
                         stride: attr.stride().map(|v| v.iter().collect()).unwrap_or_default(),
                         pad: attr.pad().map(|v| v.iter().collect()).unwrap_or_default(),
+                        acc_type: DType::from_fb(attr.acc_type()),
+                        nan_mode: NanMode::Propagate,
                     };
                 }
             }
@@ -712,42 +778,64 @@ impl Graph {
                         kernel: attr.kernel().map(|v| v.iter().collect()).unwrap_or_default(),
                         stride: attr.stride().map(|v| v.iter().collect()).unwrap_or_default(),
                         pad: attr.pad().map(|v| v.iter().collect()).unwrap_or_default(),
+                        acc_type: DType::Unknown,
+                        nan_mode: NanMode::from_fb(attr.nan_mode()),
                     };
                 }
             }
             generated::Attribute::ArgMaxAttribute => {
                 if let Some(attr) = fb_op.attribute_as_arg_max_attribute() {
-                    return OpAttribute::ArgMax { axis: attr.axis() };
+                    return OpAttribute::ArgMax { axis: attr.axis(), nan_mode: NanMode::from_fb(attr.nan_mode()) };
                 }
             }
             generated::Attribute::ReduceAllAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_all_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::Propagate };
                 }
             }
             generated::Attribute::ReduceAnyAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_any_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::Propagate };
                 }
             }
             generated::Attribute::ReduceMaxAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_max_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::from_fb(attr.nan_mode()) };
                 }
             }
             generated::Attribute::ReduceMinAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_min_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::from_fb(attr.nan_mode()) };
                 }
             }
             generated::Attribute::ReduceProductAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_product_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::Propagate };
                 }
             }
             generated::Attribute::ReduceSumAttribute => {
                 if let Some(attr) = fb_op.attribute_as_reduce_sum_attribute() {
-                    return OpAttribute::Reduce { axis: attr.axis() };
+                    return OpAttribute::Reduce { axis: attr.axis(), nan_mode: NanMode::Propagate };
+                }
+            }
+            generated::Attribute::DimAttribute => {
+                if let Some(attr) = fb_op.attribute_as_dim_attribute() {
+                    return OpAttribute::Dim { axis: attr.axis() };
+                }
+            }
+            generated::Attribute::AssertEqualShapeAttribute => {
+                if let Some(attr) = fb_op.attribute_as_assert_equal_shape_attribute() {
+                    return OpAttribute::AssertEqualShape { allow_broadcast: attr.allow_broadcast() };
+                }
+            }
+            generated::Attribute::MaximumAttribute => {
+                if let Some(attr) = fb_op.attribute_as_maximum_attribute() {
+                    return OpAttribute::NanPropagation { nan_mode: NanMode::from_fb(attr.nan_mode()) };
+                }
+            }
+            generated::Attribute::MinimumAttribute => {
+                if let Some(attr) = fb_op.attribute_as_minimum_attribute() {
+                    return OpAttribute::NanPropagation { nan_mode: NanMode::from_fb(attr.nan_mode()) };
                 }
             }
             generated::Attribute::ConcatAttribute => {
@@ -773,6 +861,7 @@ impl Graph {
                             .max_val()
                             .map(|v| v.bytes().to_vec())
                             .unwrap_or_default(),
+                        nan_mode: NanMode::from_fb(attr.nan_mode()),
                     };
                 }
             }
@@ -787,6 +876,7 @@ impl Graph {
                 if let Some(attr) = fb_op.attribute_as_rescale_attribute() {
                     return OpAttribute::Rescale {
                         scale32: attr.scale32(),
+                        rounding_mode: RoundingMode::from_fb(attr.rounding_mode()),
                         per_channel: attr.per_channel(),
                         input_unsigned: attr.input_unsigned(),
                         output_unsigned: attr.output_unsigned(),

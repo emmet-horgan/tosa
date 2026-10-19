@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 flatbuffers = "25.2"
 half = { version = "2", features = ["num-traits"] }
+libm = "0.2.16"
 thiserror = "2"
 
 [dev-dependencies]

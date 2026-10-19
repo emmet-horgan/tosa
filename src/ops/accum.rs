@@ -5,8 +5,11 @@
 //! - INT32: `int32_t`, wrapping on overflow.
 //! - INT48: `int64_t` (the result is clamped to 48 bits by the caller).
 //! - FP32: `float`.
-//! - FP16 / BF16: a software float where every multiply and every add is
-//!   evaluated in f32 and immediately rounded back to the accumulator type.
+//! - FP16 / BF16: a software float (`ct::cfloat_advanced`) with no arithmetic
+//!   operators of its own: values are combined in f32 and rounded back to the
+//!   accumulator type on assignment. `acc += a * b` (convolutions) therefore
+//!   rounds the product before adding it, while `acc = acc + a * b` (MATMUL)
+//!   does not.
 //!
 //! Operands are converted to the accumulator type before multiplying. For
 //! every legal type combination that conversion is exact.
@@ -81,6 +84,24 @@ impl Accumulator for AccF16 {
     fn mac(self, a: f32, b: f32) -> Self {
         let product = round_to(DType::F16, a * b);
         AccF16(round_to(DType::F16, self.0 + product))
+    }
+}
+
+/// FP16 accumulator for `acc = acc + a * b` (as opposed to `acc += a * b`):
+/// the product stays in f32 and only the sum is rounded to f16. The
+/// reference model's MATMUL accumulates this way.
+#[derive(Clone, Copy)]
+pub struct AccF16UnroundedProduct(pub f32);
+
+impl Accumulator for AccF16UnroundedProduct {
+    type Operand = f32;
+
+    fn zero() -> Self {
+        AccF16UnroundedProduct(0.0)
+    }
+
+    fn mac(self, a: f32, b: f32) -> Self {
+        AccF16UnroundedProduct(round_to(DType::F16, self.0 + a * b))
     }
 }
 
