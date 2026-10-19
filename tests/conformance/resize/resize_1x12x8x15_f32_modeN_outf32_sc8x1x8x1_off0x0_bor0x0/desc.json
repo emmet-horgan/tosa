@@ -1,0 +1,113 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP32",
+     "shape": [
+      1,
+      12,
+      8,
+      15
+     ],
+     "input_pos": 0,
+     "op": "RESIZE",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 8256310475473386612,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "SHAPE",
+     "shape": [
+      4
+     ],
+     "input_pos": 1,
+     "op": "RESIZE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       8.0,
+       1.0,
+       8.0,
+       1.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "SHAPE",
+     "shape": [
+      2
+     ],
+     "input_pos": 2,
+     "op": "RESIZE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "SHAPE",
+     "shape": [
+      2
+     ],
+     "input_pos": 3,
+     "op": "RESIZE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0,
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "MAX_RELATIVE",
+     "data_type": "FP32",
+     "shape": [
+      1,
+      89,
+      57,
+      15
+     ],
+     "max_relative_info": {
+      "max": 1.0,
+      "scale": 0.006,
+      "ulp_bound": 20.0
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

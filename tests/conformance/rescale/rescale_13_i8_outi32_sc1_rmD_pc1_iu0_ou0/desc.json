@@ -1,0 +1,136 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ],
+     "input_pos": 0,
+     "op": "RESCALE",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 14918960914298868930,
+      "range": [
+       "20",
+       "127"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [
+      13
+     ],
+     "input_pos": 1,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       1380338048.0,
+       1491134592.0,
+       1561097728.0,
+       2129503104.0,
+       1176534400.0,
+       1775089024.0,
+       1767540864.0,
+       1262386816.0,
+       1241952896.0,
+       1599131264.0,
+       1327357184.0,
+       1963448832.0,
+       2113704576.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ],
+     "input_pos": 2,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       9.0,
+       7.0,
+       8.0,
+       11.0,
+       11.0,
+       9.0,
+       9.0,
+       7.0,
+       7.0,
+       8.0,
+       10.0,
+       7.0,
+       8.0
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       84.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "INT32",
+     "shape": [
+      13
+     ]
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

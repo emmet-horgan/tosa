@@ -1,0 +1,134 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0",
+  "input-1",
+  "input-2",
+  "input-3",
+  "input-4"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy",
+  "input-2.npy",
+  "input-3.npy",
+  "input-4.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      4
+     ],
+     "input_pos": 0,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 16797617037480784263,
+      "range": [
+       "-9223372036854775808",
+       "9223372036854775807"
+      ]
+     }
+    },
+    "input-1": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      4
+     ],
+     "input_pos": 1,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 16797617037480784264,
+      "range": [
+       "-9223372036854775808",
+       "9223372036854775807"
+      ]
+     }
+    },
+    "input-2": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      4
+     ],
+     "input_pos": 2,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 16797617037480784265,
+      "range": [
+       "-9223372036854775808",
+       "9223372036854775807"
+      ]
+     }
+    },
+    "input-3": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      4
+     ],
+     "input_pos": 3,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 16797617037480784266,
+      "range": [
+       "-9223372036854775808",
+       "9223372036854775807"
+      ]
+     }
+    },
+    "input-4": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      4
+     ],
+     "input_pos": 4,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 16797617037480784267,
+      "range": [
+       "-9223372036854775808",
+       "9223372036854775807"
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "INT64",
+     "shape": [
+      10,
+      20
+     ]
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

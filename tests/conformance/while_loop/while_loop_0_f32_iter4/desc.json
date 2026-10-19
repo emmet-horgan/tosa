@@ -1,0 +1,102 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0",
+  "input-1"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "layer-3"
+ ],
+ "ofm_file": [
+  "ref-layer-3.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP32",
+     "shape": [],
+     "input_pos": 0,
+     "op": "WHILE_LOOP",
+     "input_type": "VARIABLE",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "input-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [],
+     "input_pos": 1,
+     "op": "WHILE_LOOP",
+     "input_type": "VARIABLE",
+     "fixed_data_info": {
+      "data": [
+       4.0
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP32",
+     "shape": [],
+     "input_pos": 2,
+     "op": "WHILE_LOOP",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 5020868874123470960,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [],
+     "input_pos": 3,
+     "op": "WHILE_LOOP",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [],
+     "input_pos": 4,
+     "op": "WHILE_LOOP",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       1.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "layer-3": {
+     "mode": "EXACT",
+     "data_type": "FP32",
+     "shape": []
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

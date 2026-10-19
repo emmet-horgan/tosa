@@ -1,0 +1,110 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": true,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP16",
+     "shape": [
+      1,
+      5,
+      6,
+      3
+     ],
+     "input_pos": 0,
+     "op": "TRANSPOSE_CONV2D",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 17957627367254029657,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP16",
+     "shape": [
+      4,
+      5,
+      5,
+      3
+     ],
+     "input_pos": 1,
+     "op": "TRANSPOSE_CONV2D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 17957627367254029658,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP16",
+     "shape": [
+      4
+     ],
+     "input_pos": 2,
+     "op": "TRANSPOSE_CONV2D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 17957627367254029659,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP16",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "TRANSPOSE_CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP16",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "TRANSPOSE_CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

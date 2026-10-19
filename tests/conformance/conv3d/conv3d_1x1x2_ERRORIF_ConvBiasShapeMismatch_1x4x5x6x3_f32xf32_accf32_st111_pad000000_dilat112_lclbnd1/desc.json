@@ -1,0 +1,112 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": true,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP32",
+     "shape": [
+      1,
+      4,
+      5,
+      6,
+      3
+     ],
+     "input_pos": 0,
+     "op": "CONV3D",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 4554106723329596953,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP32",
+     "shape": [
+      6,
+      1,
+      1,
+      2,
+      3
+     ],
+     "input_pos": 1,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 4554106723329596954,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP32",
+     "shape": [
+      5
+     ],
+     "input_pos": 2,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "pseudo_random_info": {
+      "rng_seed": 4554106723329596955,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP32",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP32",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

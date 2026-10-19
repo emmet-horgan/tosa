@@ -1,0 +1,97 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0",
+  "input-1",
+  "input-2",
+  "input-3"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy",
+  "input-2.npy",
+  "input-3.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": true,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT32",
+     "shape": [
+      9
+     ],
+     "input_pos": 0,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 6713577664639214168,
+      "range": [
+       "-2147483648",
+       "2147483647"
+      ]
+     }
+    },
+    "input-1": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT32",
+     "shape": [
+      9
+     ],
+     "input_pos": 1,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 6713577664639214169,
+      "range": [
+       "-2147483648",
+       "2147483647"
+      ]
+     }
+    },
+    "input-2": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT32",
+     "shape": [
+      9
+     ],
+     "input_pos": 2,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 6713577664639214170,
+      "range": [
+       "-2147483648",
+       "2147483647"
+      ]
+     }
+    },
+    "input-3": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT32",
+     "shape": [
+      9
+     ],
+     "input_pos": 3,
+     "op": "CONCAT",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 6713577664639214171,
+      "range": [
+       "-2147483648",
+       "2147483647"
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

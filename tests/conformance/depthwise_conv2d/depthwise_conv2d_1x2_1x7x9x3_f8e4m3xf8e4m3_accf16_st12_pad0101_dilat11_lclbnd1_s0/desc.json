@@ -1,0 +1,137 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1,
+      7,
+      9,
+      3
+     ],
+     "input_pos": 0,
+     "op": "DEPTHWISE_CONV2D",
+     "input_type": "VARIABLE",
+     "dot_product_info": {
+      "s": 0,
+      "ks": 2,
+      "out_type": "FP16",
+      "kernel": [
+       1,
+       2
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1,
+      2,
+      3,
+      11
+     ],
+     "input_pos": 1,
+     "op": "DEPTHWISE_CONV2D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 0,
+      "ks": 2,
+      "out_type": "FP16",
+      "kernel": [
+       1,
+       2
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP16",
+     "shape": [
+      33
+     ],
+     "input_pos": 2,
+     "op": "DEPTHWISE_CONV2D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 0,
+      "ks": 2,
+      "out_type": "FP16",
+      "kernel": [
+       1,
+       2
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "DEPTHWISE_CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "DEPTHWISE_CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "DOT_PRODUCT",
+     "data_type": "FP16",
+     "shape": [
+      1,
+      8,
+      5,
+      33
+     ],
+     "dot_product_info": {
+      "s": 0,
+      "ksb": 2,
+      "abs_bound": 4,
+      "variance_error_bound": 3.2
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

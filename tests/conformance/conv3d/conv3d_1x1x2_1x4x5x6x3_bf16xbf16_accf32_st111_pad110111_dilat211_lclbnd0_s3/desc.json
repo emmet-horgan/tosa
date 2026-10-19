@@ -1,0 +1,143 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "BF16",
+     "shape": [
+      1,
+      4,
+      5,
+      6,
+      3
+     ],
+     "input_pos": 0,
+     "op": "CONV3D",
+     "input_type": "VARIABLE",
+     "dot_product_info": {
+      "s": 3,
+      "ks": 6,
+      "out_type": "BF16",
+      "kernel": [
+       1,
+       1,
+       2
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "BF16",
+     "shape": [
+      4,
+      1,
+      1,
+      2,
+      3
+     ],
+     "input_pos": 1,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 3,
+      "ks": 6,
+      "out_type": "BF16",
+      "kernel": [
+       1,
+       1,
+       2
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "BF16",
+     "shape": [
+      4
+     ],
+     "input_pos": 2,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 3,
+      "ks": 6,
+      "out_type": "BF16",
+      "kernel": [
+       1,
+       1,
+       2
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "BF16",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "BF16",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "CONV3D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "DOT_PRODUCT",
+     "data_type": "BF16",
+     "shape": [
+      1,
+      6,
+      6,
+      7,
+      4
+     ],
+     "dot_product_info": {
+      "s": 3,
+      "ksb": 1,
+      "abs_bound": 2,
+      "variance_error_bound": 1.6
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

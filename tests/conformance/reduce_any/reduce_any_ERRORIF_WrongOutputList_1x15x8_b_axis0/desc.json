@@ -1,0 +1,42 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": true,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "BOOL",
+     "shape": [
+      1,
+      15,
+      8
+     ],
+     "input_pos": 0,
+     "op": "REDUCE_ANY",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 8440929094680855959,
+      "range": [
+       "0",
+       "1"
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

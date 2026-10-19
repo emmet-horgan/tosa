@@ -1,0 +1,78 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "FP16",
+     "shape": [],
+     "input_pos": 0,
+     "op": "NEGATE",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 1378708151600793570,
+      "range": [
+       "0.0",
+       "1.0"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP16",
+     "shape": [
+      1
+     ],
+     "input_pos": 1,
+     "op": "NEGATE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP16",
+     "shape": [
+      1
+     ],
+     "input_pos": 2,
+     "op": "NEGATE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "FP16",
+     "shape": []
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

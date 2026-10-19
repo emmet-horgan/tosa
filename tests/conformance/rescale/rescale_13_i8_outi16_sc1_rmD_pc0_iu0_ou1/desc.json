@@ -1,0 +1,113 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ],
+     "input_pos": 0,
+     "op": "RESCALE",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 10647242324988390101,
+      "range": [
+       "-128",
+       "127"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [
+      1
+     ],
+     "input_pos": 1,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       1372697856.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 2,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       25.0
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       -72.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT16",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "RESCALE",
+     "unsigned_data": true,
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "INT16",
+     "shape": [
+      13
+     ]
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

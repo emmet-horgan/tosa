@@ -1,0 +1,137 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP8E4M3",
+     "shape": [
+      2,
+      10,
+      7,
+      8
+     ],
+     "input_pos": 0,
+     "op": "CONV2D",
+     "input_type": "VARIABLE",
+     "dot_product_info": {
+      "s": 2,
+      "ks": 24,
+      "out_type": "FP16",
+      "kernel": [
+       3,
+       1
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP8E4M3",
+     "shape": [
+      6,
+      3,
+      1,
+      8
+     ],
+     "input_pos": 1,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 2,
+      "ks": 24,
+      "out_type": "FP16",
+      "kernel": [
+       3,
+       1
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "DOT_PRODUCT",
+     "data_type": "FP16",
+     "shape": [
+      1
+     ],
+     "input_pos": 2,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "dot_product_info": {
+      "s": 2,
+      "ks": 24,
+      "out_type": "FP16",
+      "kernel": [
+       3,
+       1
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "FP8E4M3",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "CONV2D",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       0.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "DOT_PRODUCT",
+     "data_type": "FP16",
+     "shape": [
+      2,
+      11,
+      9,
+      6
+     ],
+     "dot_product_info": {
+      "s": 2,
+      "ksb": 1,
+      "abs_bound": 2048,
+      "variance_error_bound": 1677721.6
+     }
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}

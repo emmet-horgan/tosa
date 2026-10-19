@@ -1,0 +1,137 @@
+{
+ "tosa_file": "test.tosa",
+ "ifm_name": [
+  "input-0"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "data_gen": {
+   "tensors": {
+    "input-0": {
+     "generator": "PSEUDO_RANDOM",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ],
+     "input_pos": 0,
+     "op": "RESCALE",
+     "input_type": "VARIABLE",
+     "pseudo_random_info": {
+      "rng_seed": 11815521364604456755,
+      "range": [
+       "-128",
+       "127"
+      ]
+     }
+    },
+    "const-0": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT32",
+     "shape": [
+      13
+     ],
+     "input_pos": 1,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       1794600448.0,
+       1985127040.0,
+       1243182720.0,
+       1337015168.0,
+       1262717952.0,
+       1619933696.0,
+       2063830912.0,
+       1657659264.0,
+       1754316160.0,
+       1936552576.0,
+       1347570176.0,
+       2013320320.0,
+       1874266240.0
+      ]
+     }
+    },
+    "const-1": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ],
+     "input_pos": 2,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       35.0,
+       35.0,
+       31.0,
+       31.0,
+       35.0,
+       31.0,
+       32.0,
+       38.0,
+       31.0,
+       31.0,
+       34.0,
+       31.0,
+       38.0
+      ]
+     }
+    },
+    "const-2": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 3,
+     "op": "RESCALE",
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       -40.0
+      ]
+     }
+    },
+    "const-3": {
+     "generator": "FIXED_DATA",
+     "data_type": "INT8",
+     "shape": [
+      1
+     ],
+     "input_pos": 4,
+     "op": "RESCALE",
+     "unsigned_data": true,
+     "input_type": "CONSTANT",
+     "fixed_data_info": {
+      "data": [
+       -82.0
+      ]
+     }
+    }
+   },
+   "version": "1.2"
+  },
+  "compliance": {
+   "tensors": {
+    "result-0": {
+     "mode": "EXACT",
+     "data_type": "INT8",
+     "shape": [
+      13
+     ]
+    }
+   },
+   "version": "1.2"
+  }
+ }
+}
