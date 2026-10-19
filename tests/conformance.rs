@@ -7,10 +7,17 @@
 //! model's result. Negative tests (`"expected_failure": true`) must be
 //! rejected by the interpreter.
 //!
-//! Outputs are compared bit for bit; any two NaNs are considered equal.
+//! Outputs are compared bit for bit; any two NaNs are considered equal. The
+//! one exception is a tensor whose compliance mode (in the test's `meta`) is
+//! `ULP` with a bound of at least one ULP: the specification then allows
+//! implementations to differ, and the reference model itself uses the
+//! platform's libm (e.g. ERF), so a difference of up to that many ULPs from
+//! the reference output is accepted. Set `TOSA_CONFORMANCE_STRICT=1` to
+//! require bit-exact results everywhere.
 //!
-//! Set `TOSA_CONFORMANCE_DIR` (a `:`-separated list) to run test cases from
-//! other directories instead, e.g. a larger locally generated suite.
+//! Set `TOSA_CONFORMANCE_DIR` (a list separated like `PATH`) to run test
+//! cases from other directories instead, e.g. the full suite generated with
+//! `scripts/gen_conformance.py --full` into `target/conformance-full`.
 //! Regenerate the checked-in cases with `scripts/gen_conformance.py`.
 
 use std::collections::HashMap;
@@ -28,6 +35,28 @@ struct Desc {
     ofm_file: Vec<String>,
     #[serde(default)]
     expected_failure: bool,
+    #[serde(default)]
+    meta: serde_json::Value,
+}
+
+/// Accepted ULP difference for output tensor `name` (0 = bit-exact).
+fn ulp_tolerance(desc: &Desc, name: &str) -> u64 {
+    if std::env::var_os("TOSA_CONFORMANCE_STRICT").is_some() {
+        return 0;
+    }
+    let c = &desc.meta["compliance"]["tensors"][name];
+    if c["mode"] != "ULP" {
+        return 0;
+    }
+    c["ulp_info"]["ulp"].as_f64().map_or(0, |u| u.floor() as u64)
+}
+
+/// Distance in representable values between two floats given as sign-magnitude bits.
+fn ulp_distance(a: u64, b: u64, sign_bit: u64) -> u64 {
+    let ordinal = |x: u64| -> i128 {
+        if x & sign_bit != 0 { -((x & !sign_bit) as i128) } else { x as i128 }
+    };
+    (ordinal(a) - ordinal(b)).unsigned_abs() as u64
 }
 
 fn roots() -> Vec<PathBuf> {
@@ -60,7 +89,7 @@ fn tensor_dtypes(graph: &Graph) -> HashMap<&str, DType> {
 }
 
 /// Element-wise bit comparison; returns a description of the first mismatches.
-fn compare(actual: &TensorData, expected: &TensorData) -> std::result::Result<(), String> {
+fn compare(actual: &TensorData, expected: &TensorData, ulps: u64) -> std::result::Result<(), String> {
     fn diff<T: PartialEq + std::fmt::Debug>(
         a: &[T],
         e: &[T],
@@ -80,6 +109,10 @@ fn compare(actual: &TensorData, expected: &TensorData) -> std::result::Result<()
             .collect();
         Err(format!("{} of {} elements differ:\n{}", bad.len(), a.len(), shown.join("\n")))
     }
+    // Equal bits, both NaN, or (when allowed) within `ulps` of each other.
+    let close = |a: u64, b: u64, a_nan: bool, b_nan: bool, sign: u64| {
+        a == b || (a_nan && b_nan) || (ulps > 0 && !a_nan && !b_nan && ulp_distance(a, b, sign) <= ulps)
+    };
     use TensorData as T;
     match (actual, expected) {
         (T::Bool(a), T::Bool(e)) => diff(a, e, PartialEq::eq),
@@ -94,13 +127,13 @@ fn compare(actual: &TensorData, expected: &TensorData) -> std::result::Result<()
             diff(a, e, |x, y| x == y || (x.is_nan() && y.is_nan()))
         }
         (T::F16(a), T::F16(e)) => {
-            diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
+            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000))
         }
         (T::Bf16(a), T::Bf16(e)) => {
-            diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
+            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000))
         }
         (T::F32(a), T::F32(e)) => {
-            diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
+            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000_0000))
         }
         (T::F64(a), T::F64(e)) => {
             diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
@@ -132,7 +165,12 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
     if desc.expected_failure {
         return match result {
             Ok(_) => Err("expected the graph to be rejected, but it ran successfully".into()),
-            Err(_) => Ok(()),
+            Err(e) => {
+                if std::env::var_os("TOSA_CONFORMANCE_VERBOSE").is_some() {
+                    eprintln!("{}: rejected: {e}", dir.display());
+                }
+                Ok(())
+            }
         };
     }
     let outputs = result.map_err(|e| format!("interpreter error: {e}"))?;
@@ -147,7 +185,7 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
             return Err(format!("{name}: shape {:?} != expected {:?}", actual.shape, arr.shape).into());
         }
         let expected = arr.to_tensor_data(dtype)?;
-        compare(&actual.data, &expected).map_err(|m| format!("{name}: {m}"))?;
+        compare(&actual.data, &expected, ulp_tolerance(&desc, name)).map_err(|m| format!("{name}: {m}"))?;
     }
     Ok(())
 }
@@ -159,7 +197,13 @@ fn main() {
         let mut found = Vec::new();
         collect_cases(&root, &mut found);
         cases.extend(found.into_iter().map(|p| {
-            let name = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('/', "::");
+            let name = p
+                .strip_prefix(&root)
+                .unwrap_or(&p)
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("::");
             (name, p)
         }));
     }

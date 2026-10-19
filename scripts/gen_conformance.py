@@ -12,17 +12,24 @@ For each requested operator this script:
 3. Copies each test case into ``tests/conformance/<op>/<test>/``.
 
 Tests the reference model reports as UNPREDICTABLE are dropped, as are
-positive tests it fails to run.
+positive tests it fails to run. MX (microscaling) extension tests are not
+generated. The generator produces thousands of cases per operator, so by
+default a sample is kept (see ``--max-positive`` / ``--max-negative``);
+``--full`` keeps every case, writing to the untracked ``target/conformance-full``.
 
-Usage (from the tosa-interp checkout, with a tosa-tools checkout whose Python
-package -- including the reference model -- is installed into its ``.venv``):
+Run it with a Python environment that has the ``tosa-tools`` wheel installed
+(it provides the generator, the reference model executable and its data
+generation library), e.g. from the repository root:
 
-    ../tosa-tools/.venv/bin/python scripts/gen_conformance.py \\
-        --tosa-tools ../tosa-tools --op conv2d
+    uv venv .venv && uv pip install --python .venv tosa-tools
+    .venv/bin/python scripts/gen_conformance.py --op conv2d        # Linux/macOS
+    .venv\\Scripts\\python scripts\\gen_conformance.py --op conv2d   # Windows
 
-Each ``--op`` value is a regular expression matched against the generator's
-operator names (``conv2d`` expands to ``^conv2d_\\d+x\\d+$`` style templated
-names automatically, see ``OP_FILTERS``).
+Set ``TOSA_REF_MODEL`` / ``TOSA_GENERATE_LIB`` to override the binaries used.
+
+Each ``--op`` value names a generator operator (e.g. ``conv2d``) and is
+also the output directory name; ``OP_FILTERS`` can map it to a different
+generator filter regex.
 """
 
 from __future__ import annotations
@@ -31,145 +38,342 @@ import argparse
 import json
 import os
 import shutil
+import random
+import re
 import subprocess
 import sys
-import tempfile
+import sysconfig
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO / "tests" / "conformance"
+# Untracked location for complete (unsampled) suites; run them with
+# TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --test conformance
+FULL_OUT = REPO / "target" / "conformance-full"
+# Raw generator output, cached so re-sampling does not rerun the generator.
+GEN_CACHE = REPO / "target" / "conformance-gen"
 
-# Generator operator-name regexes for operators whose tests are templated.
-OP_FILTERS = {
-    "conv2d": r"^conv2d_\d+x\d+$",
-    "conv3d": r"^conv3d_\d+x\d+x\d+$",
-    "depthwise_conv2d": r"^depthwise_conv2d_\d+x\d+$",
-    "transpose_conv2d": r"^transpose_conv2d_\d+x\d+$",
-}
+# Generator operator-name regexes, for operators whose generator name differs
+# from the name used for the output directory. Defaults to ``^<op>$``.
+OP_FILTERS: dict[str, str] = {}
 
-# Default generator options per operator, chosen to keep the checked-in data
-# small while still covering every type combination and attribute edge case.
+# Every extension except the MX (microscaling) ones, which tosa-interp does
+# not implement. Tests needing an unlisted extension are not generated.
+EXTENSIONS = [
+    "tosa-ext-bf16",
+    "tosa-ext-controlflow",
+    "tosa-ext-doubleround",
+    "tosa-ext-dynamic",
+    "tosa-ext-fft",
+    "tosa-ext-fp8e4m3",
+    "tosa-ext-fp8e5m2",
+    "tosa-ext-inexactround",
+    "tosa-ext-int16",
+    "tosa-ext-int4",
+    "tosa-ext-variable",
+    "tosa-ext-int64",
+    "tosa-ext-shape",
+]
+
+# Generator runs per operator: each entry is one set of extra arguments for
+# tosa_verif_build_tests. Several runs are needed when, e.g., float and
+# integer types require different shapes. Chosen to keep data small while
+# covering every type combination and attribute edge case.
+DEFAULT_GEN_ARGS = [["--tensor-dim-range", "1,16"]]
+
+_INT_TYPES = ["--target-dtype", "int8", "int16", "int4"]
+_FP_TYPES = ["--target-dtype", "fp32", "fp16", "bf16", "fp8e4m3", "fp8e5m2"]
+_CONV_LIMITS = ["--max-conv-padding", "1", "--max-conv-dilation", "2", "--max-conv-stride", "2"]
+
 OP_GEN_ARGS = {
     "conv2d": [
-        "--tensor-dim-range", "1,12",
-        "--max-conv-padding", "2",
-        "--max-conv-dilation", "2",
-        "--max-conv-stride", "2",
-        "--max-batch-size", "2",
+        [
+            "--tensor-dim-range", "1,12",
+            "--max-conv-padding", "2",
+            "--max-conv-dilation", "2",
+            "--max-conv-stride", "2",
+            "--max-batch-size", "2",
+        ]
+    ],
+    "conv3d": [
+        [*_INT_TYPES, "--target-shape", "2,3,4,3,2", "--tensor-dim-range", "1,8", *_CONV_LIMITS],
+        [*_FP_TYPES, "--target-shape", "1,4,5,6,3", "--tensor-dim-range", "1,8", *_CONV_LIMITS],
+    ],
+    "depthwise_conv2d": [
+        [*_INT_TYPES, "--target-shape", "2,5,6,2", "--tensor-dim-range", "1,10", *_CONV_LIMITS],
+        [*_FP_TYPES, "--target-shape", "1,7,9,3", "--conv-kernel", "3,3", "1,2", *_CONV_LIMITS],
+    ],
+    "transpose_conv2d": [
+        [*_INT_TYPES, "--target-shape", "2,4,3,2", "--tensor-dim-range", "1,10", "--max-conv-stride", "2"],
+        [*_FP_TYPES, "--target-shape", "1,5,6,3", "--tensor-dim-range", "1,10", "--max-conv-stride", "2"],
+    ],
+    # Float dot-product tests need the generator's default shapes.
+    "matmul": [[]],
+    "avg_pool2d": [
+        [*_INT_TYPES[:-1], "--tensor-dim-range", "1,16"],
+        [*_FP_TYPES, "--target-shape", "1,9,11,3", "2,6,7,2"],
+    ],
+    # Size-1 dimensions make the generator emit a zero-sized split, and its
+    # FP8 ConcatInputDimMismatch ERROR_IF test has a zero dimension, so FP8
+    # gets positive tests only.
+    "concat": [
+        ["--tensor-dim-range", "2,16", "--test-type", "positive"],
+        ["--tensor-dim-range", "2,16", "--test-type", "negative",
+         "--target-dtype", "bool", "int8", "int16", "int32", "int64", "fp16", "bf16", "fp32"],
+    ],
+    # A rank-0 TensorSizeInputOutputMismatch ERROR_IF test fails the
+    # generator's own validation, so negative tests use ranks 2-4.
+    "reshape": [
+        ["--tensor-dim-range", "1,16", "--test-type", "positive"],
+        ["--tensor-dim-range", "1,16", "--test-type", "negative", "--target-rank", "2", "3", "4"],
     ],
 }
 
+# Per-operator cap on positive tests kept per sampling key, for operators
+# whose tests are large (the generator needs big shapes for them).
+OP_MAX_POSITIVE = {"matmul": 1, "resize": 2}
 
-def tool(venv_bin: Path, name: str) -> Path:
-    path = venv_bin / name
-    if not path.exists():
-        sys.exit(f"error: {path} not found; is tosa-tools installed into its venv?")
-    return path
+# Test-name tokens describing element types, e.g. ``i8xi4``, ``accf32``, ``outbf16``.
+_DTYPE = r"(?:bool|b|i\d+|u\d+|f\d+|bf16|f8e4m3|f8e5m2)"
+DTYPE_TOKEN = re.compile(rf"^(?:acc|out)?{_DTYPE}(?:x{_DTYPE})*$")
 
 
-def find_ref_model(tosa_tools: Path) -> Path:
-    candidates = [
-        os.environ.get("TOSA_REF_MODEL"),
-        *sorted(str(p) for p in (tosa_tools / ".venv").glob("lib/python*/site-packages/bin/tosa_reference_model")),
-        str(tosa_tools / "build-py" / "skbuild" / "reference_model" / "reference_model" / "tosa_reference_model"),
-        str(tosa_tools / "build" / "reference_model" / "tosa_reference_model"),
-    ]
+def type_tokens(params: str) -> list[str]:
+    return [t for t in params.split("_") if DTYPE_TOKEN.match(t)]
+
+
+def positive_key(test_name: str) -> str:
+    """Group key for sampling positive tests: the type tokens, and whether the
+    test uses special (e.g. NaN/infinity/extreme) data, marked by an ``_s<N>`` suffix."""
+    _, _, params = test_name.partition("_")
+    key = type_tokens(params)
+    if re.fullmatch(r"s\d+", test_name.rsplit("_", 1)[-1]):
+        key.append("special")
+    return "_".join(key)
+
+
+def negative_kind(test_name: str) -> tuple[str, str]:
+    """The ERROR_IF kind and the type signature of a negative test."""
+    _, _, rest = test_name.partition("_ERRORIF_")
+    kind, _, params = rest.partition("_")
+    return kind, "_".join(type_tokens(params))
+
+
+SITE_PACKAGES = Path(sysconfig.get_path("purelib"))
+SCRIPTS_DIR = Path(sysconfig.get_path("scripts"))
+
+
+def tool(name: str) -> Path:
+    path = shutil.which(name, path=str(SCRIPTS_DIR))
+    if not path:
+        sys.exit(f"error: {name} not found in {SCRIPTS_DIR}; is tosa-tools installed in this environment?")
+    return Path(path)
+
+
+def find_file(env_var: str, candidates: list[Path], what: str) -> Path:
+    override = os.environ.get(env_var)
+    if override:
+        return Path(override)
     for c in candidates:
-        if c and Path(c).is_file():
-            return Path(c)
-    sys.exit("error: cannot locate the tosa_reference_model executable; set TOSA_REF_MODEL")
+        if c.is_file():
+            return c
+    sys.exit(f"error: cannot locate the {what}; set {env_var}")
+
+
+def find_ref_model() -> Path:
+    bin_dir = SITE_PACKAGES / "bin"
+    return find_file(
+        "TOSA_REF_MODEL",
+        [bin_dir / "tosa_reference_model.exe", bin_dir / "tosa_reference_model"],
+        "tosa_reference_model executable",
+    )
+
+
+def find_generate_lib() -> Path:
+    lib_dir = SITE_PACKAGES / "tosa_reference_model"
+    names = ["tosa_reference_generate_lib.dll", "libtosa_reference_generate_lib.so", "libtosa_reference_generate_lib.dylib"]
+    return find_file("TOSA_GENERATE_LIB", [lib_dir / n for n in names], "tosa_reference_generate_lib library")
 
 
 def run_ref_model(ref_model: Path, test_dir: Path) -> int:
     proc = subprocess.run(
         [str(ref_model), "--test_desc", str(test_dir / "desc.json"), "--tosa_level", "NONE"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     return proc.returncode
 
 
-def generate_op(args, op: str, venv_bin: Path, ref_model: Path) -> tuple[int, int]:
-    op_filter = OP_FILTERS.get(op, f"^{op}$")
-    gen_args = OP_GEN_ARGS.get(op, []) + args.gen_arg
+def select_tests(tests: list[Path], max_positive: int, max_negative: int, seed: int) -> list[Path]:
+    """Sample the generated tests (a negative limit keeps everything).
+
+    Positive tests: up to ``max_positive`` per ``positive_key``, so every type
+    combination keeps both normal and special-value coverage.
+    ERROR_IF tests: up to ``max_negative`` per error kind, drawn from as many
+    different type signatures as possible.
+    """
+    rng = random.Random(seed)
+    positive_groups: dict[str, list[Path]] = defaultdict(list)
+    negative_groups: dict[str, dict[str, list[Path]]] = defaultdict(lambda: defaultdict(list))
+    for t in tests:
+        if "_ERRORIF_" in t.name:
+            kind, types = negative_kind(t.name)
+            negative_groups[kind][types].append(t)
+        else:
+            positive_groups[positive_key(t.name)].append(t)
+
+    selected = []
+    for key in sorted(positive_groups):
+        group = positive_groups[key]
+        selected += group if max_positive < 0 else rng.sample(group, min(max_positive, len(group)))
+    for kind in sorted(negative_groups):
+        by_types = negative_groups[kind]
+        if max_negative < 0:
+            selected += [t for types in sorted(by_types) for t in by_types[types]]
+            continue
+        # Round-robin over shuffled type signatures.
+        pools = [rng.sample(by_types[k], len(by_types[k])) for k in sorted(by_types)]
+        rng.shuffle(pools)
+        picked: list[Path] = []
+        while len(picked) < max_negative and any(pools):
+            for pool in pools:
+                if pool and len(picked) < max_negative:
+                    picked.append(pool.pop())
+        selected += picked
+    return sorted(selected)
+
+
+def keep_test(test: Path, ref_model: Path, dest_root: Path) -> bool:
+    desc = json.loads((test / "desc.json").read_text())
+    negative = desc.get("expected_failure", False)
+    for f in desc["ofm_file"]:
+        (test / f).unlink(missing_ok=True)  # stale output from an earlier run of a cached test
+    status = run_ref_model(ref_model, test)
+    if negative:
+        # The reference model must reject the graph; otherwise the generator
+        # produced something we cannot use as an oracle.
+        if status == 0:
+            return False
+    elif status != 0 or any(not (test / f).exists() for f in desc["ofm_file"]):
+        return False
+
+    # Keep only what the Rust harness needs.
+    desc = {
+        k: desc[k]
+        for k in ("tosa_file", "ifm_name", "ifm_file", "ofm_name", "ofm_file", "expected_failure", "meta")
+        if k in desc
+    }
+    dest = dest_root / test.name
+    dest.mkdir(parents=True, exist_ok=True)
+    files = [desc["tosa_file"], *desc["ifm_file"]]
+    if not negative:
+        files += desc["ofm_file"]
+    for f in files:
+        shutil.copy2(test / f, dest / f)
+    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n")
+    return True
+
+
+def generate_op(args, op: str, ref_model: Path, generate_lib: Path) -> tuple[int, int]:
+    gen_dir = GEN_CACHE / op
+    if args.regenerate or not (gen_dir / ".complete").exists():
+        if gen_dir.exists():
+            shutil.rmtree(gen_dir)
+        runs = OP_GEN_ARGS.get(op, DEFAULT_GEN_ARGS)
+        for i, run_args in enumerate(runs):
+            out = gen_dir / str(i)
+            out.mkdir(parents=True)
+            cmd = [
+                str(tool("tosa_verif_build_tests")),
+                "--generate-lib-path", str(generate_lib),
+                "-o", str(out),
+                "--filter", OP_FILTERS.get(op, f"^{op}$"),
+                "--extension", *EXTENSIONS,
+                "--seed", str(args.seed),
+                "--test-type", "both",
+                *run_args,
+                *args.gen_arg,
+            ]
+            print("+", " ".join(cmd), flush=True)
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        (gen_dir / ".complete").touch()
+    else:
+        print(f"{op}: reusing generator output in {gen_dir} (--regenerate to rebuild)", flush=True)
+
+    # Runs may produce identically named tests (typically ERROR_IF ones); keep the first.
+    tests = list({p.parent.name: p.parent for p in sorted(gen_dir.rglob("desc.json"), reverse=True)}.values())
+    tests.sort(key=lambda p: p.name)
+    if args.test_type != "both":
+        want_negative = args.test_type == "negative"
+        tests = [t for t in tests if ("_ERRORIF_" in t.name) == want_negative]
+    if not tests:
+        print(f"warning: no tests generated for {op}", file=sys.stderr)
+        return 0, 0
+    max_positive = args.max_positive
+    if max_positive >= 0 and op in OP_MAX_POSITIVE:
+        max_positive = min(max_positive, OP_MAX_POSITIVE[op])
+    selected = select_tests(tests, max_positive, args.max_negative, args.seed)
+    print(f"{op}: generated {len(tests)} tests, checking {len(selected)} against the reference model", flush=True)
+
     dest_root = args.out / op
-    with tempfile.TemporaryDirectory(prefix=f"tosa-gen-{op}-") as tmp:
-        cmd = [
-            str(tool(venv_bin, "tosa_verif_build_tests")),
-            "-o", tmp,
-            "--filter", op_filter,
-            "--seed", str(args.seed),
-            "--test-type", args.test_type,
-            *gen_args,
-        ]
-        print("+", " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True)
-
-        tests = sorted(p.parent for p in Path(tmp).rglob("desc.json"))
-        if not tests:
-            print(f"warning: no tests generated for {op}", file=sys.stderr)
-            return 0, 0
-
-        if dest_root.exists() and not args.keep:
-            shutil.rmtree(dest_root)
-        kept = dropped = 0
-        for test in tests:
-            desc_path = test / "desc.json"
-            desc = json.loads(desc_path.read_text())
-            negative = desc.get("expected_failure", False)
-            status = run_ref_model(ref_model, test)
-            if negative:
-                # The reference model must reject the graph; otherwise the
-                # generator produced something we cannot use as an oracle.
-                if status == 0:
-                    dropped += 1
-                    continue
-            elif status != 0:
-                dropped += 1
-                continue
-            missing = [f for f in desc["ofm_file"] if not (test / f).exists()]
-            if not negative and missing:
-                dropped += 1
-                continue
-
-            # Keep only what the Rust harness needs.
-            desc = {
-                k: desc[k]
-                for k in ("tosa_file", "ifm_name", "ifm_file", "ofm_name", "ofm_file", "expected_failure", "meta")
-                if k in desc
-            }
-            dest = dest_root / test.name
-            dest.mkdir(parents=True, exist_ok=True)
-            files = [desc["tosa_file"], *desc["ifm_file"]]
-            if not negative:
-                files += desc["ofm_file"]
-            for f in files:
-                shutil.copy2(test / f, dest / f)
-            (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n")
-            kept += 1
-    return kept, dropped
-
+    if dest_root.exists() and not args.keep:
+        shutil.rmtree(dest_root)
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        results = list(pool.map(lambda t: keep_test(t, ref_model, dest_root), selected))
+    kept = sum(results)
+    return kept, len(results) - kept
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--tosa-tools", type=Path, default=REPO.parent / "tosa-tools")
     parser.add_argument("--op", action="append", required=True, help="operator to generate (repeatable)")
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--out", type=Path, help=f"output root (default {DEFAULT_OUT}, or {FULL_OUT} with --full)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-type", default="both", choices=["positive", "negative", "both"])
+    parser.add_argument(
+        "--max-positive",
+        type=int,
+        default=3,
+        help="positive tests kept per (type signature, special data); -1 keeps all",
+    )
+    parser.add_argument(
+        "--max-negative",
+        type=int,
+        default=3,
+        help="ERROR_IF tests kept per error kind; -1 keeps all",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="keep every generated test (implies --max-positive -1 --max-negative -1)",
+    )
+    parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1)
+    parser.add_argument("--regenerate", action="store_true", help="rerun the generator even if cached")
     parser.add_argument("--keep", action="store_true", help="do not delete existing cases for the op")
     parser.add_argument(
         "--gen-arg", action="append", default=[], help="extra argument passed to tosa_verif_build_tests"
     )
     args = parser.parse_args()
+    if args.full:
+        args.max_positive = args.max_negative = -1
+    if args.out is None:
+        args.out = FULL_OUT if args.full else DEFAULT_OUT
 
-    venv_bin = args.tosa_tools / ".venv" / "bin"
-    ref_model = find_ref_model(args.tosa_tools)
+    ref_model = find_ref_model()
+    generate_lib = find_generate_lib()
     print(f"reference model: {ref_model}")
+    failed = []
     for op in args.op:
-        kept, dropped = generate_op(args, op, venv_bin, ref_model)
+        try:
+            kept, dropped = generate_op(args, op, ref_model, generate_lib)
+        except subprocess.CalledProcessError as e:
+            print(f"{op}: FAILED: {e}", file=sys.stderr)
+            failed.append(op)
+            continue
         print(f"{op}: kept {kept} test cases, dropped {dropped}")
+    if failed:
+        sys.exit(f"generation failed for: {', '.join(failed)}")
 
 
 if __name__ == "__main__":
