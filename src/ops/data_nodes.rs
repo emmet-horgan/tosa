@@ -14,12 +14,10 @@ pub fn eval_const(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         .clone();
 
     let shape = shape_from_ir(&tensor_def.shape);
+    let count: usize = shape.iter().product();
     let data = match &tensor_def.data {
-        Some(bytes) => TensorData::from_raw_bytes(tensor_def.dtype, bytes)?,
-        None => {
-            let count: usize = shape.iter().product::<usize>().max(1);
-            TensorData::zeros(tensor_def.dtype, count)?
-        }
+        Some(bytes) => TensorData::from_raw_bytes(tensor_def.dtype, bytes, count)?,
+        None => TensorData::zeros(tensor_def.dtype, count)?,
     };
 
     let tensor = Tensor::new(output_name.clone(), shape, data);

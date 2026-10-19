@@ -4,16 +4,25 @@ use crate::generated;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DType {
     Bool,
+    I4,
     I8,
     I16,
     I32,
     I48,
     I64,
+    Fp8E4M3,
+    Fp8E5M2,
     F16,
     Bf16,
     F32,
     F64,
     Shape,
+    // Microscaling (MX) formats: recognised but not yet executable.
+    Fp6E2M3,
+    Fp6E3M2,
+    Fp4E2M1,
+    Fp8Ue8M0,
+    MxInt8,
     Unknown,
 }
 
@@ -21,37 +30,50 @@ impl DType {
     pub fn from_fb(dt: generated::DType) -> Self {
         match dt {
             generated::DType::BOOL => DType::Bool,
-            generated::DType::INT4 | generated::DType::INT8 => DType::I8,
+            generated::DType::INT4 => DType::I4,
+            generated::DType::INT8 => DType::I8,
             generated::DType::INT16 => DType::I16,
             generated::DType::INT32 => DType::I32,
             generated::DType::INT48 => DType::I48,
             generated::DType::INT64 => DType::I64,
+            generated::DType::FP8E4M3 => DType::Fp8E4M3,
+            generated::DType::FP8E5M2 => DType::Fp8E5M2,
             generated::DType::FP16 => DType::F16,
             generated::DType::BF16 => DType::Bf16,
             generated::DType::FP32 => DType::F32,
             generated::DType::SHAPE => DType::Shape,
+            generated::DType::FP6E2M3 => DType::Fp6E2M3,
+            generated::DType::FP6E3M2 => DType::Fp6E3M2,
+            generated::DType::FP4E2M1 => DType::Fp4E2M1,
+            generated::DType::FP8UE8M0 => DType::Fp8Ue8M0,
+            generated::DType::MXINT8 => DType::MxInt8,
             _ => DType::Unknown,
         }
     }
 
+    /// Bytes per element in memory (INT4 is held unpacked, one per byte).
     pub fn element_size_bytes(self) -> usize {
         match self {
-            DType::Bool | DType::I8 => 1,
+            DType::Bool | DType::I4 | DType::I8 | DType::Fp8E4M3 | DType::Fp8E5M2 => 1,
+            DType::Fp6E2M3 | DType::Fp6E3M2 | DType::Fp4E2M1 | DType::Fp8Ue8M0 | DType::MxInt8 => 1,
             DType::I16 | DType::F16 | DType::Bf16 => 2,
-            DType::I32 | DType::F32 | DType::Shape => 4,
-            DType::I48 | DType::I64 | DType::F64 => 8,
+            DType::I32 | DType::F32 => 4,
+            DType::I48 | DType::I64 | DType::F64 | DType::Shape => 8,
             DType::Unknown => 0,
         }
     }
 
     pub fn is_float(self) -> bool {
-        matches!(self, DType::F16 | DType::Bf16 | DType::F32 | DType::F64)
+        matches!(
+            self,
+            DType::Fp8E4M3 | DType::Fp8E5M2 | DType::F16 | DType::Bf16 | DType::F32 | DType::F64
+        )
     }
 
     pub fn is_int(self) -> bool {
         matches!(
             self,
-            DType::I8 | DType::I16 | DType::I32 | DType::I48 | DType::I64
+            DType::I4 | DType::I8 | DType::I16 | DType::I32 | DType::I48 | DType::I64
         )
     }
 }
@@ -173,6 +195,10 @@ pub enum Op {
     Rfft2d,
     // Custom
     Custom,
+    // TOSA 1.1 additions
+    RowGather,
+    MatMulT,
+    ArgMin,
     // Unknown/unsupported
     Unknown(u32),
 }
@@ -278,6 +304,9 @@ impl Op {
             generated::Op::FFT2D => Op::Fft2d,
             generated::Op::RFFT2D => Op::Rfft2d,
             generated::Op::CUSTOM => Op::Custom,
+            generated::Op::ROW_GATHER => Op::RowGather,
+            generated::Op::MATMUL_T => Op::MatMulT,
+            generated::Op::ARGMIN => Op::ArgMin,
             other => Op::Unknown(other.0),
         }
     }
@@ -382,6 +411,9 @@ impl Op {
             Op::Fft2d => "FFT2D",
             Op::Rfft2d => "RFFT2D",
             Op::Custom => "CUSTOM",
+            Op::RowGather => "ROW_GATHER",
+            Op::MatMulT => "MATMUL_T",
+            Op::ArgMin => "ARGMIN",
             Op::Unknown(_) => "UNKNOWN",
         }
     }

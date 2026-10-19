@@ -70,6 +70,21 @@ enum BlockSize:uint32 {
   BLOCK_SIZE_32 = 32,
 }
 
+enum BlockShape:uint32 {
+  UNKNOWN = 0,
+  BLOCK_SHAPE_32 = 32,
+}
+
+// Forward compatibility feature flags required by this file. Readers can use
+// these values to reject files that depend on unsupported compatibility
+// behavior.
+enum CompatibilityFeature:uint32 {
+  NONE = 0,
+  MXFP = 1,
+  CAST_INPUT_UNSIGNED = 2,
+}
+
+// Every op must have an attribute in `union Attribute` and order must match.
 enum Op:uint32 {
   UNKNOWN = 0,
   ARGMAX,
@@ -170,6 +185,9 @@ enum Op:uint32 {
   AVG_POOL2D_ADAPTIVE,
   RESHAPE_BLOCK_SCALED,
   ROW_GATHER_BLOCK_SCALED,
+  ROW_GATHER,
+  MATMUL_T,
+  ARGMIN,
 }
 
 union Attribute {
@@ -270,7 +288,10 @@ union Attribute {
   MaxPool2dAdaptiveAttribute,
   AvgPool2dAdaptiveAttribute,
   ReshapeBlockScaledAttribute,
-  RowGatherBlockScaledAttribute
+  RowGatherBlockScaledAttribute,
+  RowGatherAttribute,
+  MatMulTAttribute,
+  ArgMinAttribute,
 }
 
 table ArgMaxAttribute {
@@ -523,6 +544,9 @@ table GatherAttribute {
 table ScatterAttribute {
 }
 
+table RowGatherAttribute {
+}
+
 table RowGatherBlockScaledAttribute {
   block_size: BlockSize;
 }
@@ -532,6 +556,7 @@ table ResizeAttribute {
 }
 
 table CastAttribute {
+  input_unsigned: bool = false;
 }
 
 table RescaleAttribute {
@@ -594,11 +619,29 @@ table Conv2dBlockScaledAttribute {
   block_size: BlockSize;
 }
 
+table MatMulTAttribute {
+}
+
+table ArgMinAttribute {
+  axis: int32;
+  nan_mode: NanPropagationMode;
+}
+
 table SoftwareVersion {
   _major: int32 = -1;
   _minor: int32 = -1;
   _micro: int32 = -1;
   _modifier: string;
+}
+
+table SerializationCompatibility {
+  // Minimum serialization library version required to safely read this file.
+  // This value is computed by the writer from the serialized contents and must
+  // stay within the configured forward compatibility support window.
+  min_reader_version: SoftwareVersion;
+  // Explicit forward compatibility features required by this file, encoded as a
+  // bitmap keyed by CompatibilityFeature enum values. Bit 0 (NONE) is unused.
+  features:uint64 = 0;
 }
 
 table DimAttribute {
@@ -671,6 +714,12 @@ table TosaTensor {
   // valid if > 1.
   offset: ulong;
   size: ulong;
+
+  scale_type: DType;
+  scale_data: [ubyte] (force_align: 8); // Scale shape is inferred from `shape` and `block_shape` in this table.
+  block_shape: BlockShape;
+  scale_offset: ulong;
+  scale_size: ulong;
 }
 
 table TosaShape {
@@ -708,7 +757,12 @@ table TosaRegion {
 table TosaGraph {
   version:Version (required);
   regions:[TosaRegion];       // regions array
+  // Serialization-library version that wrote this file. This is set
+  // automatically from the current library release metadata.
   software_version:SoftwareVersion; // cannot be required for back-compat
+  // Forward compatibility metadata for this file. This includes the minimum
+  // reader version needed to load it safely.
+  compatibility:SerializationCompatibility; // cannot be required for back-compat
 }
 
 root_type TosaGraph;

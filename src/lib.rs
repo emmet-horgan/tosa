@@ -1,8 +1,10 @@
 pub mod broadcast;
 pub mod error;
+pub mod float8;
 pub mod generated;
 pub mod interpreter;
 pub mod ir;
+pub mod npy;
 pub mod ops;
 pub mod stats;
 pub mod tensor;

@@ -1,6 +1,9 @@
+pub mod accum;
 pub mod binary;
+pub mod common;
 pub mod comparison;
 pub mod control_flow;
+pub mod conv2d;
 pub mod data_layout;
 pub mod data_nodes;
 pub mod reduction;
@@ -86,7 +89,7 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         Op::Scatter => data_layout::eval_scatter(state, op),
 
         // Tensor compute
-        Op::Conv2d => tensor_ops::eval_conv2d(state, op),
+        Op::Conv2d => conv2d::eval_conv2d(state, op),
         Op::MatMul => tensor_ops::eval_matmul(state, op),
         Op::AvgPool2d => tensor_ops::eval_avg_pool2d(state, op),
         Op::MaxPool2d => tensor_ops::eval_max_pool2d(state, op),
@@ -136,7 +139,10 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         | Op::RowGatherBlockScaled
         | Op::Fft2d
         | Op::Rfft2d
-        | Op::Custom => Err(Error::UnsupportedOp(format!("{}", op.op.name()))),
+        | Op::Custom
+        | Op::RowGather
+        | Op::MatMulT
+        | Op::ArgMin => Err(Error::UnsupportedOp(format!("{}", op.op.name()))),
 
         Op::Unknown(v) => Err(Error::UnsupportedOp(format!("op code {v}"))),
     }

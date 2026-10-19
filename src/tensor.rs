@@ -1,14 +1,19 @@
 use crate::error::{Error, Result};
+use crate::float8::{Fp8E4M3, Fp8E5M2};
 use crate::ir::DType;
 
 #[derive(Debug, Clone)]
 pub enum TensorData {
     Bool(Vec<bool>),
+    /// INT4 values in [-8, 7], held one per byte.
+    I4(Vec<i8>),
     I8(Vec<i8>),
     I16(Vec<i16>),
     I32(Vec<i32>),
     I48(Vec<i64>),
     I64(Vec<i64>),
+    Fp8E4M3(Vec<Fp8E4M3>),
+    Fp8E5M2(Vec<Fp8E5M2>),
     F16(Vec<half::f16>),
     Bf16(Vec<half::bf16>),
     F32(Vec<f32>),
@@ -19,11 +24,14 @@ impl TensorData {
     pub fn dtype(&self) -> DType {
         match self {
             TensorData::Bool(_) => DType::Bool,
+            TensorData::I4(_) => DType::I4,
             TensorData::I8(_) => DType::I8,
             TensorData::I16(_) => DType::I16,
             TensorData::I32(_) => DType::I32,
             TensorData::I48(_) => DType::I48,
             TensorData::I64(_) => DType::I64,
+            TensorData::Fp8E4M3(_) => DType::Fp8E4M3,
+            TensorData::Fp8E5M2(_) => DType::Fp8E5M2,
             TensorData::F16(_) => DType::F16,
             TensorData::Bf16(_) => DType::Bf16,
             TensorData::F32(_) => DType::F32,
@@ -34,11 +42,13 @@ impl TensorData {
     pub fn len(&self) -> usize {
         match self {
             TensorData::Bool(v) => v.len(),
-            TensorData::I8(v) => v.len(),
+            TensorData::I4(v) | TensorData::I8(v) => v.len(),
             TensorData::I16(v) => v.len(),
             TensorData::I32(v) => v.len(),
             TensorData::I48(v) => v.len(),
             TensorData::I64(v) => v.len(),
+            TensorData::Fp8E4M3(v) => v.len(),
+            TensorData::Fp8E5M2(v) => v.len(),
             TensorData::F16(v) => v.len(),
             TensorData::Bf16(v) => v.len(),
             TensorData::F32(v) => v.len(),
@@ -53,11 +63,14 @@ impl TensorData {
     pub fn zeros(dtype: DType, count: usize) -> Result<Self> {
         Ok(match dtype {
             DType::Bool => TensorData::Bool(vec![false; count]),
+            DType::I4 => TensorData::I4(vec![0; count]),
             DType::I8 => TensorData::I8(vec![0; count]),
             DType::I16 => TensorData::I16(vec![0; count]),
             DType::I32 => TensorData::I32(vec![0; count]),
             DType::I48 => TensorData::I48(vec![0; count]),
-            DType::I64 => TensorData::I64(vec![0; count]),
+            DType::I64 | DType::Shape => TensorData::I64(vec![0; count]),
+            DType::Fp8E4M3 => TensorData::Fp8E4M3(vec![Fp8E4M3::ZERO; count]),
+            DType::Fp8E5M2 => TensorData::Fp8E5M2(vec![Fp8E5M2::ZERO; count]),
             DType::F16 => TensorData::F16(vec![half::f16::ZERO; count]),
             DType::Bf16 => TensorData::Bf16(vec![half::bf16::ZERO; count]),
             DType::F32 => TensorData::F32(vec![0.0; count]),
@@ -66,14 +79,40 @@ impl TensorData {
         })
     }
 
-    pub fn from_raw_bytes(dtype: DType, bytes: &[u8]) -> Result<Self> {
+    /// Decode serialized (little-endian) tensor data holding `count` elements.
+    ///
+    /// INT4 is packed two per byte, low nibble first; INT48 uses 6 bytes per
+    /// element. Trailing alignment padding in `bytes` is ignored.
+    pub fn from_raw_bytes(dtype: DType, bytes: &[u8], count: usize) -> Result<Self> {
+        let needed = match dtype {
+            DType::I4 => count.div_ceil(2),
+            DType::I48 => count * 6,
+            _ => count * dtype.element_size_bytes(),
+        };
+        if bytes.len() < needed {
+            return Err(Error::Deserialize(format!(
+                "{dtype:?} tensor of {count} elements needs {needed} bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let bytes = &bytes[..needed];
         Ok(match dtype {
             DType::Bool => {
                 TensorData::Bool(bytes.iter().map(|&b| b != 0).collect())
             }
+            DType::I4 => TensorData::I4(
+                (0..count)
+                    .map(|i| {
+                        let nibble = (bytes[i / 2] >> (4 * (i % 2))) & 0xF;
+                        ((nibble << 4) as i8) >> 4
+                    })
+                    .collect(),
+            ),
             DType::I8 => {
                 TensorData::I8(bytes.iter().map(|&b| b as i8).collect())
             }
+            DType::Fp8E4M3 => TensorData::Fp8E4M3(bytes.iter().map(|&b| Fp8E4M3(b)).collect()),
+            DType::Fp8E5M2 => TensorData::Fp8E5M2(bytes.iter().map(|&b| Fp8E5M2(b)).collect()),
             DType::I16 => {
                 let data: Vec<i16> = bytes
                     .chunks_exact(2)

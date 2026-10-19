@@ -92,6 +92,9 @@ pub fn eval_transpose(state: &mut InterpreterState, op: &Operator) -> Result<()>
         TensorData::F16(v) => transpose_typed!(F16, v),
         TensorData::Bf16(v) => transpose_typed!(Bf16, v),
         TensorData::F64(v) => transpose_typed!(F64, v),
+        TensorData::I4(v) => transpose_typed!(I4, v),
+        TensorData::Fp8E4M3(v) => transpose_typed!(Fp8E4M3, v),
+        TensorData::Fp8E5M2(v) => transpose_typed!(Fp8E5M2, v),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -207,6 +210,9 @@ pub fn eval_concat(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(_) => concat_typed!(F16),
         TensorData::Bf16(_) => concat_typed!(Bf16),
         TensorData::F64(_) => concat_typed!(F64),
+        TensorData::I4(_) => concat_typed!(I4),
+        TensorData::Fp8E4M3(_) => concat_typed!(Fp8E4M3),
+        TensorData::Fp8E5M2(_) => concat_typed!(Fp8E5M2),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -284,6 +290,9 @@ pub fn eval_slice(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(v) => slice_typed!(F16, v),
         TensorData::Bf16(v) => slice_typed!(Bf16, v),
         TensorData::F64(v) => slice_typed!(F64, v),
+        TensorData::I4(v) => slice_typed!(I4, v),
+        TensorData::Fp8E4M3(v) => slice_typed!(Fp8E4M3, v),
+        TensorData::Fp8E5M2(v) => slice_typed!(Fp8E5M2, v),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -357,6 +366,9 @@ pub fn eval_pad(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(v) => pad_typed!(F16, v, half::f16::ZERO),
         TensorData::Bf16(v) => pad_typed!(Bf16, v, half::bf16::ZERO),
         TensorData::F64(v) => pad_typed!(F64, v, 0.0f64),
+        TensorData::I4(v) => pad_typed!(I4, v, 0i8),
+        TensorData::Fp8E4M3(v) => pad_typed!(Fp8E4M3, v, crate::float8::Fp8E4M3::ZERO),
+        TensorData::Fp8E5M2(v) => pad_typed!(Fp8E5M2, v, crate::float8::Fp8E5M2::ZERO),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -422,6 +434,9 @@ pub fn eval_tile(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(v) => tile_typed!(F16, v),
         TensorData::Bf16(v) => tile_typed!(Bf16, v),
         TensorData::F64(v) => tile_typed!(F64, v),
+        TensorData::I4(v) => tile_typed!(I4, v),
+        TensorData::Fp8E4M3(v) => tile_typed!(Fp8E4M3, v),
+        TensorData::Fp8E5M2(v) => tile_typed!(Fp8E5M2, v),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -485,6 +500,9 @@ pub fn eval_reverse(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(v) => reverse_typed!(F16, v),
         TensorData::Bf16(v) => reverse_typed!(Bf16, v),
         TensorData::F64(v) => reverse_typed!(F64, v),
+        TensorData::I4(v) => reverse_typed!(I4, v),
+        TensorData::Fp8E4M3(v) => reverse_typed!(Fp8E4M3, v),
+        TensorData::Fp8E5M2(v) => reverse_typed!(Fp8E5M2, v),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
@@ -562,6 +580,9 @@ pub fn eval_gather(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         TensorData::F16(v) => gather_typed!(F16, v),
         TensorData::Bf16(v) => gather_typed!(Bf16, v),
         TensorData::F64(v) => gather_typed!(F64, v),
+        TensorData::I4(v) => gather_typed!(I4, v),
+        TensorData::Fp8E4M3(v) => gather_typed!(Fp8E4M3, v),
+        TensorData::Fp8E5M2(v) => gather_typed!(Fp8E5M2, v),
     };
 
     state.set_tensor(Tensor::new(output_name.clone(), out_shape, data));
