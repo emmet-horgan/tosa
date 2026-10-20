@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    # The flatbuffers runtime must match the flatc version (flatc-fork) used to
+    # generate src/generated; bump both together and run `cargo xtask codegen`.
+    ignore:
+      - dependency-name: flatbuffers
+      - dependency-name: flatc-fork
+    groups:
+      cargo:
+        update-types: [minor, patch]

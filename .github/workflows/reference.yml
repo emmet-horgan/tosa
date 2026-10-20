@@ -1,0 +1,75 @@
+name: Reference model
+
+# Checks the interpreter against the TOSA reference model running natively on
+# each platform, rather than against the checked-in expectations (which were
+# produced on one platform). Generation is slow, so this runs weekly and on
+# demand instead of on every push.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      ops:
+        description: Space-separated operators to generate test cases for
+        required: false
+        default: abs add mul cast rescale reduce_sum avg_pool2d sin cos exp log pow erf sigmoid tanh fft2d rfft2d
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  DEFAULT_OPS: abs add mul cast rescale reduce_sum avg_pool2d sin cos exp log pow erf sigmoid tanh fft2d rfft2d
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  reference:
+    name: Reference model (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Refresh network reference outputs
+        run: |
+          uv run scripts/refresh_networks.py
+          git diff --exit-code --stat -- tests/networks
+
+      - name: Generate conformance cases
+        env:
+          OPS: ${{ inputs.ops || env.DEFAULT_OPS }}
+        run: |
+          args=()
+          for op in $OPS; do args+=(--op "$op"); done
+          uv run scripts/gen_conformance.py "${args[@]}" --out target/ci-conformance
+
+      - name: Run the interpreter against them
+        env:
+          TOSA_CONFORMANCE_DIR: target/ci-conformance
+          TOSA_CONFORMANCE_VERBOSE: "1"
+        run: cargo test --release --test conformance
+
+      - name: Upload generated cases
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-${{ matrix.os }}
+          path: target/ci-conformance
+          retention-days: 7
