@@ -16,7 +16,8 @@ how it is tested and how much of the TOSA specification the tests cover.
 The baseline is the TOSA 1.1 draft specification as implemented by the
 tosa-tools reference model, version **v2026.08.0** (the `tosa-tools` Python
 wheel). Every claim of correctness below is a bit-exact comparison with
-that reference model unless stated otherwise.
+that reference model unless stated otherwise. [TESTING.md](TESTING.md)
+describes the test suites, the harness and CI in more detail.
 
 ## How operators are verified
 
@@ -26,7 +27,7 @@ graph LR;
   T --> R[tosa_reference_model];
   R --> E[expected outputs];
   T --> I[tosa-interp];
-  E --> C{bit-exact compare};
+  E --> C{compare};
   I --> C;
 ```
 
@@ -45,11 +46,15 @@ graph through tosa-interp and compares the results.
 3. `cargo test --test conformance` runs every case through tosa-interp.
    Positive outputs must match **bit for bit** (any NaN equals any NaN).
    Negative cases must be rejected with an error.
-4. The only tolerance is for outputs whose compliance mode is `ULP` with a
-   bound of at least one ULP, where the specification itself permits
-   differences. Only ERF uses it: the reference evaluates ERF with the
-   platform C library, which cannot be reproduced exactly. Set
-   `TOSA_CONFORMANCE_STRICT=1` to disable it.
+4. The only tolerance is for ERF, LOG, POW, SIN, COS, FFT2D and RFFT2D. The
+   reference evaluates them with the host C library (`erf`, `logf`, `sinf`,
+   `cosf`), whose results differ by an ULP or two between Windows, Linux and
+   macOS, so no single implementation can match every platform bit for bit.
+   tosa-interp uses the portable `libm` crate, giving identical results on
+   every platform, and the harness accepts 2 ULPs (5 for ERF, the
+   specification's bound) or, for the FFTs, an absolute error of 2^-20 times
+   the sum of the input magnitudes. Set `TOSA_CONFORMANCE_STRICT=1` to
+   require bit-exact results everywhere.
 
 The generator emits thousands of cases per operator, so the checked-in suite
 (`tests/conformance`) is a sample: up to three positive cases per type
@@ -58,11 +63,13 @@ for RESIZE, whose cases are large), and up to three ERROR_IF cases per error
 kind, drawn from different type signatures. The complete suites can be built
 and run locally:
 
-```powershell
-.venv\Scripts\python scripts\gen_conformance.py --full --op conv2d
-$env:TOSA_CONFORMANCE_DIR = "target\conformance-full"
-cargo test --release --test conformance
+```sh
+uv run scripts/gen_conformance.py --full --op conv2d
+TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --release --test conformance
 ```
+
+(In PowerShell, set the variable with
+`$env:TOSA_CONFORMANCE_DIR = "target/conformance-full"` first.)
 
 The MX (microscaling) extensions are excluded from generation, as
 tosa-interp does not implement them.
@@ -208,7 +215,7 @@ Types are listed as `input -> output` (with accumulator where relevant).
 | MAX_POOL2D | i8, i16, FP16, BF16, FP32, FP8 | NaN propagation per `nan_mode`; ties keep the first value. |
 | MAX_POOL2D_ADAPTIVE | As MAX_POOL2D | Kernel, stride and pad are SHAPE operands. |
 | ARGMAX | i8, i16, i32, i64, FP16, BF16, FP32, FP8 -> i32/i64 | First maximum wins; with PROPAGATE the first NaN wins. |
-| FFT2D, RFFT2D | FP32 | Direct DFT as in the reference; angles formed in double precision, sums in FP32 with the platform `sinf`/`cosf`. |
+| FFT2D, RFFT2D | FP32 | Direct DFT as in the reference; angles formed in double precision, sums in FP32 with `libm`'s `sinf`/`cosf`. Within 2^-20 x sum(\|x\|) of the reference (observed: 3.3e-8 x sum(\|x\|)). |
 
 ### Element-wise operators
 
@@ -217,7 +224,7 @@ Types are listed as `input -> output` (with accumulator where relevant).
 | ADD, SUB | i32, i64, FP16, BF16, FP32 | Floats are computed in FP32 and rounded to the type. Integer overflow wraps (unpredictable per the specification). |
 | MUL | i8/i16 -> i32, i32 (with rounding `shift`), i64, FP16, BF16, FP32 | `shift` must be zero except for i32. |
 | MAXIMUM, MINIMUM | i32, i64, FP16, BF16, FP32 | `nan_mode` PROPAGATE or IGNORE. |
-| POW | FP16, BF16, FP32 | `exp(y * ln(x))` in FP32. |
+| POW | FP16, BF16, FP32 | `exp(y * ln(x))` in FP32 (`libm` `logf`, musl `expf`); within 2 ULPs of the reference. |
 | INTDIV | i32, i64 | Truncating; division by zero is an error. |
 | ARITHMETIC_RIGHT_SHIFT, LOGICAL_LEFT_SHIFT, LOGICAL_RIGHT_SHIFT | i8, i16, i32, i64 | Out-of-range shifts are errors. |
 | BITWISE_AND/OR/XOR/NOT | i8, i16, i32, i64 | |
@@ -225,10 +232,10 @@ Types are listed as `input -> output` (with accumulator where relevant).
 | ABS, NEGATE | i32/i64 and floats (ABS); i8-i64 with zero points and floats (NEGATE) | |
 | CEIL, FLOOR, CLZ | Floats; i32/i64 for CLZ | |
 | EXP | FP16, BF16, FP32 | Bit-exact port of the musl `expf` the reference bundles (`ops/math.rs`). |
-| LOG, SIN, COS | FP16, BF16, FP32 | Platform libm, as in the reference. Bit-exact on the platform the suites were generated on (Windows); may differ by an ULP elsewhere. |
+| LOG, SIN, COS | FP16, BF16, FP32 | `libm` crate `logf`/`sinf`/`cosf`; the reference uses the platform C library. Within 1 ULP of the reference on Windows and Linux (2 accepted). |
 | RECIPROCAL, RSQRT | FP16, BF16, FP32 | Division in double precision, narrowed through FP32. |
-| ERF | FP16, BF16, FP32 | Double-precision `erf` rounded once; within 1 ULP of the reference (ULP bound 5). |
-| SIGMOID, TANH | FP16, BF16, FP32 | The reference's formulas, including TANH's clamping and signed zero. |
+| ERF | FP16, BF16, FP32 | `libm` double-precision `erf` rounded once; within 2 ULPs of the reference (ULP bound 5). |
+| SIGMOID, TANH | FP16, BF16, FP32 | The reference's formulas with the musl `expf` port, including TANH's clamping and signed zero; bit-exact. |
 | CLAMP | i8, i16, FP16, BF16, FP32 | `nan_mode` aware. |
 | EQUAL, GREATER, GREATER_EQUAL | i32, i64, FP16, BF16, FP32 | |
 | SELECT | bool, i8-i64, FP16, BF16, FP32 | Three-way broadcast. |
@@ -289,10 +296,11 @@ These generator behaviours are worked around in `scripts/gen_conformance.py`:
 
 ## Reproducing
 
-```powershell
-uv venv .venv
-uv pip install --python .venv tosa-tools
-.venv\Scripts\python scripts\gen_conformance.py --op <operator>
+From the repository root on any OS, with [uv](https://docs.astral.sh/uv/)
+(which installs the pinned `tosa-tools` wheel on the fly):
+
+```sh
+uv run scripts/gen_conformance.py --op <operator>
 cargo test --release --test conformance
-.venv\Scripts\python scripts\conformance_report.py
+uv run scripts/conformance_report.py
 ```
