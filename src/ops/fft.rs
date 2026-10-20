@@ -33,7 +33,14 @@ fn angle(sign: f32, iy: usize, ix: usize, oy: usize, ox: usize, h: usize, w: usi
     ((sign * 2.0) as f64 * PI * frac as f64) as f32
 }
 
-fn store(state: &mut InterpreterState, op: &Operator, name: &str, shape: Vec<usize>, real: Vec<f32>, imag: Vec<f32>) -> Result<()> {
+fn store(
+    state: &mut InterpreterState,
+    op: &Operator,
+    name: &str,
+    shape: Vec<usize>,
+    real: Vec<f32>,
+    imag: Vec<f32>,
+) -> Result<()> {
     for out in &op.outputs {
         if let Some(d) = check_declared_output(state, name, out, &shape)?
             && d != DType::F32
@@ -111,8 +118,8 @@ pub fn eval_rfft2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
                         // The imaginary parts at (0,0), (0,W/2), (H/2,0) and
                         // (H/2,W/2) are exactly zero; sin(pi) is not, so they
                         // are skipped.
-                        let in_scope = (h > 1 && ((iy * oy) % h) % half_h > 0)
-                            || (w > 1 && ((ix * ox) % w) % half_w > 0);
+                        let in_scope =
+                            (h > 1 && ((iy * oy) % h) % half_h > 0) || (w > 1 && ((ix * ox) % w) % half_w > 0);
                         if in_scope {
                             sum_im += -v * libm::sinf(a);
                         }

@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
 use crate::ir::{DType, NanMode, OpAttribute, Operator};
 use crate::ops::common::{
-    check_declared_output, check_nan_mode, expect_operands, expect_rank, float_data, float_lowest,
-    float_values, int_data, int_range, int_values, invalid, nan_max, round_to, single_value,
+    check_declared_output, check_nan_mode, expect_operands, expect_rank, float_data, float_lowest, float_values,
+    int_data, int_range, int_values, invalid, nan_max, round_to, single_value,
 };
 use crate::ops::quant::{apply_scale_32, reciprocal_scale};
 use crate::tensor::Tensor;
@@ -119,9 +119,9 @@ fn pool_attributes<'a>(op: &str, operator: &'a Operator) -> Result<PoolAttribute
 /// The output must have the input's type.
 fn check_output_dtype(op: &str, declared: Option<DType>, input: DType) -> Result<()> {
     match declared {
-        Some(d) if d != input => Err(Error::DTypeMismatch(format!(
-            "{op}: output dtype {d:?} must match input dtype {input:?}"
-        ))),
+        Some(d) if d != input => {
+            Err(Error::DTypeMismatch(format!("{op}: output dtype {d:?} must match input dtype {input:?}")))
+        }
         _ => Ok(()),
     }
 }

@@ -18,8 +18,8 @@ use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
 use crate::ir::{DType, NanMode, OpAttribute, Operator};
 use crate::ops::common::{
-    check_declared_output, check_nan_mode, expect_operands, float_data, float_values, int_data,
-    int_range, int_values, invalid, nan_max, nan_min, round_to, single_value,
+    check_declared_output, check_nan_mode, expect_operands, float_data, float_values, int_data, int_range, int_values,
+    invalid, nan_max, nan_min, round_to, single_value,
 };
 use crate::ops::math;
 use crate::tensor::{Tensor, TensorData};
@@ -120,10 +120,7 @@ fn finish(state: &mut InterpreterState, op: &Operator, name: &str, shape: Vec<us
     if let Some(declared) = check_declared_output(state, name, output, &shape)?
         && declared != data.dtype()
     {
-        return Err(Error::DTypeMismatch(format!(
-            "{name}: output dtype {declared:?} should be {:?}",
-            data.dtype()
-        )));
+        return Err(Error::DTypeMismatch(format!("{name}: output dtype {declared:?} should be {:?}", data.dtype())));
     }
     state.set_tensor(Tensor::new(output.clone(), shape, data));
     Ok(())
@@ -215,7 +212,11 @@ pub fn eval_floor(state: &mut InterpreterState, op: &Operator) -> Result<()> {
 
 pub fn eval_clz(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     eval_unary(state, op, "CLZ", I32_I64, |dt, l| {
-        map_int("CLZ", l, |x| if dt == DType::I32 { (x as u32).leading_zeros() } else { (x as u64).leading_zeros() } as i64)
+        map_int(
+            "CLZ",
+            l,
+            |x| if dt == DType::I32 { (x as u32).leading_zeros() } else { (x as u64).leading_zeros() } as i64,
+        )
     })
 }
 
@@ -601,7 +602,11 @@ pub fn eval_select(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     if on_false.dtype() != dtype {
         return Err(Error::DTypeMismatch(format!("{OP}: input dtypes {dtype:?} and {:?} differ", on_false.dtype())));
     }
-    require_dtype(OP, dtype, &[DType::Bool, DType::I8, DType::I16, DType::I32, DType::I64, DType::F16, DType::Bf16, DType::F32])?;
+    require_dtype(
+        OP,
+        dtype,
+        &[DType::Bool, DType::I8, DType::I16, DType::I32, DType::I64, DType::F16, DType::Bf16, DType::F32],
+    )?;
     let shape = broadcast_shape(OP, &[&cond.shape, &on_true.shape, &on_false.shape])?;
     let c = expand(c, &cond.shape, &shape);
     let t = expand_lane(lane(OP, &on_true.data)?, &on_true.shape, &shape);
@@ -657,7 +662,7 @@ pub fn eval_table(state: &mut InterpreterState, op: &Operator) -> Result<()> {
                 "{OP}: unsupported input/table dtypes {:?}/{:?}",
                 input.dtype(),
                 table.dtype()
-            )))
+            )));
         }
     };
     finish(state, op, OP, shape, data)

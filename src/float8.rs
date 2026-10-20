@@ -73,11 +73,8 @@ impl Format {
             return self.nan();
         }
         let sign: u8 = if x.is_sign_negative() { 0x80 } else { 0 };
-        let overflow = if self.has_inf {
-            sign | (self.max_exp_field() << self.man_bits) as u8
-        } else {
-            sign | self.nan()
-        };
+        let overflow =
+            if self.has_inf { sign | (self.max_exp_field() << self.man_bits) as u8 } else { sign | self.nan() };
         if x.is_infinite() {
             return overflow;
         }
@@ -110,8 +107,7 @@ impl Format {
         let finite_limit_exceeded = if self.has_inf {
             exp_field >= self.max_exp_field()
         } else {
-            exp_field > self.max_exp_field()
-                || (exp_field == self.max_exp_field() && man == self.man_mask())
+            exp_field > self.max_exp_field() || (exp_field == self.max_exp_field() && man == self.man_mask())
         };
         if finite_limit_exceeded {
             return overflow;

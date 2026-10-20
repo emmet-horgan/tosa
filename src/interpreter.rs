@@ -15,9 +15,7 @@ pub struct InterpreterState<'g> {
 
 impl<'g> InterpreterState<'g> {
     pub fn get_tensor(&self, name: &str) -> Result<&Tensor> {
-        self.tensors
-            .get(name)
-            .ok_or_else(|| Error::TensorNotFound(name.to_string()))
+        self.tensors.get(name).ok_or_else(|| Error::TensorNotFound(name.to_string()))
     }
 
     pub fn set_tensor(&mut self, tensor: Tensor) {
@@ -68,12 +66,12 @@ impl<'g> InterpreterState<'g> {
         let mut child_tensors: HashMap<String, Tensor> = HashMap::new();
 
         for (i, block_input_name) in block.inputs.iter().enumerate() {
-            if let Some(parent_name) = input_tensor_names.get(i) {
-                if let Some(tensor) = self.tensors.get(parent_name) {
-                    let mut t = tensor.clone();
-                    t.name = block_input_name.clone();
-                    child_tensors.insert(block_input_name.clone(), t);
-                }
+            if let Some(parent_name) = input_tensor_names.get(i)
+                && let Some(tensor) = self.tensors.get(parent_name)
+            {
+                let mut t = tensor.clone();
+                t.name = block_input_name.clone();
+                child_tensors.insert(block_input_name.clone(), t);
             }
         }
 
@@ -82,24 +80,20 @@ impl<'g> InterpreterState<'g> {
             child_tensor_defs.insert(td.name.clone(), td);
         }
 
-        let mut child_state = InterpreterState {
-            graph: self.graph,
-            block,
-            tensors: child_tensors,
-            tensor_defs: child_tensor_defs,
-        };
+        let mut child_state =
+            InterpreterState { graph: self.graph, block, tensors: child_tensors, tensor_defs: child_tensor_defs };
 
         // Execute the child block
         execute_block_inner(&mut child_state, &mut NoopHook)?;
 
         // Copy outputs back
         for (i, block_output_name) in block.outputs.iter().enumerate() {
-            if let Some(parent_output_name) = output_tensor_names.get(i) {
-                if let Some(tensor) = child_state.tensors.remove(block_output_name) {
-                    let mut t = tensor;
-                    t.name = parent_output_name.clone();
-                    self.tensors.insert(parent_output_name.clone(), t);
-                }
+            if let Some(parent_output_name) = output_tensor_names.get(i)
+                && let Some(tensor) = child_state.tensors.remove(block_output_name)
+            {
+                let mut t = tensor;
+                t.name = parent_output_name.clone();
+                self.tensors.insert(parent_output_name.clone(), t);
             }
         }
 
@@ -130,22 +124,14 @@ impl Interpreter {
         inputs: HashMap<String, Tensor>,
         hook: &mut dyn InterpreterHook,
     ) -> Result<HashMap<String, Tensor>> {
-        let block = self
-            .graph
-            .main_block()
-            .ok_or_else(|| Error::GraphError("no main block found".to_string()))?;
+        let block = self.graph.main_block().ok_or_else(|| Error::GraphError("no main block found".to_string()))?;
 
         let mut tensor_defs: HashMap<String, &TensorDef> = HashMap::new();
         for td in &block.tensors {
             tensor_defs.insert(td.name.clone(), td);
         }
 
-        let mut state = InterpreterState {
-            graph: &self.graph,
-            block,
-            tensors: inputs,
-            tensor_defs,
-        };
+        let mut state = InterpreterState { graph: &self.graph, block, tensors: inputs, tensor_defs };
 
         execute_block_inner(&mut state, hook)?;
 
@@ -165,10 +151,7 @@ impl Interpreter {
 /// 8K's MAX_RANK).
 pub const MAX_RANK: usize = 6;
 
-fn execute_block_inner(
-    state: &mut InterpreterState,
-    hook: &mut dyn InterpreterHook,
-) -> Result<()> {
+fn execute_block_inner(state: &mut InterpreterState, hook: &mut dyn InterpreterHook) -> Result<()> {
     let block = state.block;
 
     if let Some(t) = block.tensors.iter().find(|t| t.dtype != crate::ir::DType::Shape && t.shape.len() > MAX_RANK) {
@@ -211,16 +194,9 @@ fn execute_block_inner(
         let op = &block.operators[op_idx];
 
         // Gather input tensor refs for the hook
-        let input_refs: Vec<&Tensor> = op
-            .inputs
-            .iter()
-            .filter_map(|name| state.tensors.get(name.as_str()))
-            .collect();
+        let input_refs: Vec<&Tensor> = op.inputs.iter().filter_map(|name| state.tensors.get(name.as_str())).collect();
 
-        let op_info = OpInfo {
-            op: op.op,
-            op_index: op_idx,
-        };
+        let op_info = OpInfo { op: op.op, op_index: op_idx };
 
         hook.pre_op(&op_info, &input_refs);
 
@@ -228,22 +204,14 @@ fn execute_block_inner(
         ops::dispatch(state, op)?;
 
         // Gather output tensor refs for the hook
-        let output_refs: Vec<&Tensor> = op
-            .outputs
-            .iter()
-            .filter_map(|name| state.tensors.get(name.as_str()))
-            .collect();
+        let output_refs: Vec<&Tensor> = op.outputs.iter().filter_map(|name| state.tensors.get(name.as_str())).collect();
 
         // Notify hook about allocations
         for t in &output_refs {
             hook.on_tensor_alloc(&t.name, &t.shape, t.dtype(), t.size_bytes());
         }
 
-        let input_refs: Vec<&Tensor> = op
-            .inputs
-            .iter()
-            .filter_map(|name| state.tensors.get(name.as_str()))
-            .collect();
+        let input_refs: Vec<&Tensor> = op.inputs.iter().filter_map(|name| state.tensors.get(name.as_str())).collect();
         hook.post_op(&op_info, &input_refs, &output_refs);
 
         executed[op_idx] = true;
@@ -256,30 +224,20 @@ fn execute_block_inner(
 
         // Check if any new ops are ready
         for (i, next_op) in block.operators.iter().enumerate() {
-            if !executed[i] && op_is_ready(next_op, &available) {
-                if !ready_queue.contains(&i) {
-                    ready_queue.push_back(i);
-                }
+            if !executed[i] && op_is_ready(next_op, &available) && !ready_queue.contains(&i) {
+                ready_queue.push_back(i);
             }
         }
     }
 
     if ops_executed < num_ops {
         // Check if unexecuted ops are all ones we don't support yet
-        let unexecuted: Vec<&Operator> = block
-            .operators
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !executed[*i])
-            .map(|(_, op)| op)
-            .collect();
+        let unexecuted: Vec<&Operator> =
+            block.operators.iter().enumerate().filter(|(i, _)| !executed[*i]).map(|(_, op)| op).collect();
 
         if !unexecuted.is_empty() {
             let names: Vec<&str> = unexecuted.iter().map(|o| o.op.name()).collect();
-            return Err(Error::GraphError(format!(
-                "could not execute all ops, stuck on: {:?}",
-                names
-            )));
+            return Err(Error::GraphError(format!("could not execute all ops, stuck on: {:?}", names)));
         }
     }
 

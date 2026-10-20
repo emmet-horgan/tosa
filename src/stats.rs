@@ -172,17 +172,13 @@ impl InterpreterHook for StatsCollector {
     }
 
     fn post_op(&mut self, op: &OpInfo, inputs: &[&Tensor], outputs: &[&Tensor]) {
-        let elapsed = self
-            .current_op_start
-            .map(|s| s.elapsed())
-            .unwrap_or_default();
+        let elapsed = self.current_op_start.map(|s| s.elapsed()).unwrap_or_default();
 
         let entry = self.op_stats.entry(op.op.name()).or_default();
         entry.count += 1;
         entry.total_time += elapsed;
         entry.total_input_elements += inputs.iter().map(|t| t.element_count() as u64).sum::<u64>();
-        entry.total_output_elements +=
-            outputs.iter().map(|t| t.element_count() as u64).sum::<u64>();
+        entry.total_output_elements += outputs.iter().map(|t| t.element_count() as u64).sum::<u64>();
 
         self.total_ops_executed += 1;
     }
@@ -225,10 +221,16 @@ fn estimate_flops(op: Op, inputs: &[&Tensor], outputs: &[&Tensor]) -> u64 {
             outputs.first().map(|t| t.element_count() as u64).unwrap_or(0)
         }
         // Transcendentals: ~10 flops per element (approximation)
-        Op::Exp | Op::Log | Op::Sin | Op::Cos | Op::Tanh | Op::Sigmoid | Op::Erf
-        | Op::Rsqrt | Op::Reciprocal | Op::Pow => {
-            outputs.first().map(|t| t.element_count() as u64 * 10).unwrap_or(0)
-        }
+        Op::Exp
+        | Op::Log
+        | Op::Sin
+        | Op::Cos
+        | Op::Tanh
+        | Op::Sigmoid
+        | Op::Erf
+        | Op::Rsqrt
+        | Op::Reciprocal
+        | Op::Pow => outputs.first().map(|t| t.element_count() as u64 * 10).unwrap_or(0),
         // MATMUL: [N, H, C] x [N, C, W] → 2*N*H*W*C flops
         Op::MatMul => {
             if inputs.len() >= 2 && inputs[0].shape.len() == 3 {
@@ -243,7 +245,7 @@ fn estimate_flops(op: Op, inputs: &[&Tensor], outputs: &[&Tensor]) -> u64 {
         }
         // CONV2D: 2 * N * OH * OW * OC * KH * KW * IC
         Op::Conv2d => {
-            if inputs.len() >= 2 && outputs.len() >= 1 {
+            if inputs.len() >= 2 && !outputs.is_empty() {
                 let out = &outputs[0];
                 if out.shape.len() == 4 && inputs[1].shape.len() == 4 {
                     let n = out.shape[0] as u64;

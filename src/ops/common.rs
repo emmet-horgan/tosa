@@ -14,11 +14,7 @@ pub fn expect_operands(op: &Operator, name: &str, inputs: usize, outputs: usize)
     if op.inputs.len() != inputs || op.outputs.len() != outputs {
         return Err(invalid(
             name,
-            format!(
-                "expected {inputs} inputs and {outputs} outputs, got {} and {}",
-                op.inputs.len(),
-                op.outputs.len()
-            ),
+            format!("expected {inputs} inputs and {outputs} outputs, got {} and {}", op.inputs.len(), op.outputs.len()),
         ));
     }
     Ok(())
@@ -26,10 +22,7 @@ pub fn expect_operands(op: &Operator, name: &str, inputs: usize, outputs: usize)
 
 pub fn expect_rank(op: &str, what: &str, t: &Tensor, rank: usize) -> Result<()> {
     if t.shape.len() != rank {
-        return Err(Error::ShapeMismatch(format!(
-            "{op}: {what} must have rank {rank}, got shape {:?}",
-            t.shape
-        )));
+        return Err(Error::ShapeMismatch(format!("{op}: {what} must have rank {rank}, got shape {:?}", t.shape)));
     }
     Ok(())
 }
@@ -50,12 +43,7 @@ pub fn single_value(op: &str, what: &str, t: &Tensor) -> Result<TensorData> {
 ///
 /// Returns the declared dtype, or `None` if the graph has no definition for
 /// the output tensor.
-pub fn check_declared_output(
-    state: &InterpreterState,
-    op: &str,
-    name: &str,
-    shape: &[usize],
-) -> Result<Option<DType>> {
+pub fn check_declared_output(state: &InterpreterState, op: &str, name: &str, shape: &[usize]) -> Result<Option<DType>> {
     let Some(def) = state.find_tensor_def(name) else {
         return Ok(None);
     };

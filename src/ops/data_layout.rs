@@ -170,10 +170,7 @@ pub fn eval_reshape(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     }
     let out_shape: Vec<usize> = new_shape.iter().map(|&d| d as usize).collect();
     if out_shape.iter().product::<usize>() != input.shape.iter().product::<usize>() {
-        return Err(Error::ShapeMismatch(format!(
-            "{OP}: cannot reshape {:?} to {out_shape:?}",
-            input.shape
-        )));
+        return Err(Error::ShapeMismatch(format!("{OP}: cannot reshape {:?} to {out_shape:?}", input.shape)));
     }
     let data = input.data.clone();
     finish(state, op, OP, out_shape, data)

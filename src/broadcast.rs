@@ -7,11 +7,8 @@ pub fn broadcast_shapes(a: &[usize], b: &[usize]) -> Result<Vec<usize>> {
     let a_iter = a.iter().rev();
     let b_iter = b.iter().rev();
 
-    for (da, db) in a_iter
-        .copied()
-        .chain(std::iter::repeat(1))
-        .zip(b_iter.copied().chain(std::iter::repeat(1)))
-        .take(max_rank)
+    for (da, db) in
+        a_iter.copied().chain(std::iter::repeat(1)).zip(b_iter.copied().chain(std::iter::repeat(1))).take(max_rank)
     {
         if da == db {
             result.push(da);
@@ -20,10 +17,7 @@ pub fn broadcast_shapes(a: &[usize], b: &[usize]) -> Result<Vec<usize>> {
         } else if db == 1 {
             result.push(da);
         } else {
-            return Err(Error::Broadcast(format!(
-                "shapes {:?} and {:?} are not broadcast-compatible",
-                a, b
-            )));
+            return Err(Error::Broadcast(format!("shapes {:?} and {:?} are not broadcast-compatible", a, b)));
         }
     }
 
@@ -85,10 +79,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_different_ranks() {
-        assert_eq!(
-            broadcast_shapes(&[1, 3, 1], &[4, 1, 5]).unwrap(),
-            vec![4, 3, 5]
-        );
+        assert_eq!(broadcast_shapes(&[1, 3, 1], &[4, 1, 5]).unwrap(), vec![4, 3, 5]);
     }
 
     #[test]

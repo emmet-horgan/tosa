@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
 use crate::ir::{DType, OpAttribute, Operator};
 use crate::ops::common::{
-    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_data, int_values,
-    invalid, round_to,
+    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_data, int_values, invalid,
+    round_to,
 };
 use crate::tensor::Tensor;
 

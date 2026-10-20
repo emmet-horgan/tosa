@@ -38,10 +38,8 @@ fn repo_root() -> PathBuf {
 
 fn run_flatc(args: &[&std::ffi::OsStr]) -> Result<String, String> {
     let flatc = flatc_fork::flatc();
-    let output = Command::new(flatc)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run {}: {e}", flatc.display()))?;
+    let output =
+        Command::new(flatc).args(args).output().map_err(|e| format!("failed to run {}: {e}", flatc.display()))?;
     if !output.status.success() {
         return Err(format!(
             "flatc failed ({}):\n{}{}",

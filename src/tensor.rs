@@ -97,9 +97,7 @@ impl TensorData {
         }
         let bytes = &bytes[..needed];
         Ok(match dtype {
-            DType::Bool => {
-                TensorData::Bool(bytes.iter().map(|&b| b != 0).collect())
-            }
+            DType::Bool => TensorData::Bool(bytes.iter().map(|&b| b != 0).collect()),
             DType::I4 => TensorData::I4(
                 (0..count)
                     .map(|i| {
@@ -108,31 +106,21 @@ impl TensorData {
                     })
                     .collect(),
             ),
-            DType::I8 => {
-                TensorData::I8(bytes.iter().map(|&b| b as i8).collect())
-            }
+            DType::I8 => TensorData::I8(bytes.iter().map(|&b| b as i8).collect()),
             DType::Fp8E4M3 => TensorData::Fp8E4M3(bytes.iter().map(|&b| Fp8E4M3(b)).collect()),
             DType::Fp8E5M2 => TensorData::Fp8E5M2(bytes.iter().map(|&b| Fp8E5M2(b)).collect()),
             DType::I16 => {
-                let data: Vec<i16> = bytes
-                    .chunks_exact(2)
-                    .map(|c| i16::from_le_bytes([c[0], c[1]]))
-                    .collect();
+                let data: Vec<i16> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
                 TensorData::I16(data)
             }
             DType::I32 => {
-                let data: Vec<i32> = bytes
-                    .chunks_exact(4)
-                    .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
+                let data: Vec<i32> =
+                    bytes.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
                 TensorData::I32(data)
             }
             DType::Shape => {
                 // SHAPE dtype stores i64 values (8 bytes each)
-                let data: Vec<i64> = bytes
-                    .chunks_exact(8)
-                    .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-                    .collect();
+                let data: Vec<i64> = bytes.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect();
                 TensorData::I64(data)
             }
             DType::I48 => {
@@ -152,46 +140,29 @@ impl TensorData {
                 TensorData::I48(data)
             }
             DType::I64 => {
-                let data: Vec<i64> = bytes
-                    .chunks_exact(8)
-                    .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-                    .collect();
+                let data: Vec<i64> = bytes.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect();
                 TensorData::I64(data)
             }
             DType::F32 => {
-                let data: Vec<f32> = bytes
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
+                let data: Vec<f32> =
+                    bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
                 TensorData::F32(data)
             }
             DType::F16 => {
-                let data: Vec<half::f16> = bytes
-                    .chunks_exact(2)
-                    .map(|c| half::f16::from_le_bytes([c[0], c[1]]))
-                    .collect();
+                let data: Vec<half::f16> =
+                    bytes.chunks_exact(2).map(|c| half::f16::from_le_bytes([c[0], c[1]])).collect();
                 TensorData::F16(data)
             }
             DType::Bf16 => {
-                let data: Vec<half::bf16> = bytes
-                    .chunks_exact(2)
-                    .map(|c| half::bf16::from_le_bytes([c[0], c[1]]))
-                    .collect();
+                let data: Vec<half::bf16> =
+                    bytes.chunks_exact(2).map(|c| half::bf16::from_le_bytes([c[0], c[1]])).collect();
                 TensorData::Bf16(data)
             }
             DType::F64 => {
-                let data: Vec<f64> = bytes
-                    .chunks_exact(8)
-                    .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
-                    .collect();
+                let data: Vec<f64> = bytes.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
                 TensorData::F64(data)
             }
-            _ => {
-                return Err(Error::DTypeMismatch(format!(
-                    "cannot deserialize raw bytes for {:?}",
-                    dtype
-                )))
-            }
+            _ => return Err(Error::DTypeMismatch(format!("cannot deserialize raw bytes for {:?}", dtype))),
         })
     }
 
@@ -232,11 +203,7 @@ impl TensorData {
     pub fn concat(parts: &[&TensorData]) -> Result<TensorData> {
         let first = parts.first().ok_or_else(|| Error::GraphError("concat of no tensors".into()))?;
         if let Some(p) = parts.iter().find(|p| p.dtype() != first.dtype()) {
-            return Err(Error::DTypeMismatch(format!(
-                "cannot concatenate {:?} with {:?}",
-                first.dtype(),
-                p.dtype()
-            )));
+            return Err(Error::DTypeMismatch(format!("cannot concatenate {:?} with {:?}", first.dtype(), p.dtype())));
         }
         macro_rules! join {
             ($($variant:ident),*) => {

@@ -16,16 +16,12 @@ pub fn reciprocal_scale(value: i32) -> (i32, i32) {
 /// Errors where the reference model reports a REQUIRE failure.
 pub fn apply_scale_32(value: i32, multiplier: i32, shift: i32, double_round: bool) -> Result<i32> {
     if multiplier < 0 || !(2..=62).contains(&shift) {
-        return Err(Error::GraphError(format!(
-            "apply_scale_32: invalid multiplier {multiplier} or shift {shift}"
-        )));
+        return Err(Error::GraphError(format!("apply_scale_32: invalid multiplier {multiplier} or shift {shift}")));
     }
     let (low, high) = (-1i64 << (shift - 1), 1i64 << (shift - 1));
     let value = value as i64;
     if value < low || value >= high {
-        return Err(Error::GraphError(format!(
-            "apply_scale_32: value {value} out of range for shift {shift}"
-        )));
+        return Err(Error::GraphError(format!("apply_scale_32: value {value} out of range for shift {shift}")));
     }
     let mut round = 1i64 << (shift - 1);
     if double_round && shift > 31 {

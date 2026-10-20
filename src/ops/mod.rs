@@ -143,7 +143,7 @@ pub fn dispatch(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         | Op::ReshapeBlockScaled
         | Op::RowGatherBlockScaled
         | Op::Custom
-        | Op::ArgMin => Err(Error::UnsupportedOp(format!("{}", op.op.name()))),
+        | Op::ArgMin => Err(Error::UnsupportedOp(op.op.name().to_string())),
 
         Op::Unknown(v) => Err(Error::UnsupportedOp(format!("op code {v}"))),
     }

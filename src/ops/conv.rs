@@ -22,8 +22,8 @@ use crate::interpreter::InterpreterState;
 use crate::ir::{DType, OpAttribute, Operator};
 use crate::ops::accum::{AccBf16, AccF16, AccF32, AccI32, AccI64, Accumulator};
 use crate::ops::common::{
-    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_values,
-    invalid, round_to, single_value,
+    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_values, invalid, round_to,
+    single_value,
 };
 use crate::tensor::{Tensor, TensorData};
 
@@ -63,8 +63,7 @@ fn output_extent(
     dilation: i32,
     stride: i32,
 ) -> Result<usize> {
-    let full = input as i64 - 1 + pad_before as i64 + pad_after as i64
-        - (kernel as i64 - 1) * dilation as i64;
+    let full = input as i64 - 1 + pad_before as i64 + pad_after as i64 - (kernel as i64 - 1) * dilation as i64;
     if full % stride as i64 != 0 {
         return Err(invalid(op, "parameters must yield exact integer output dimensions"));
     }
@@ -119,9 +118,7 @@ impl ConvNd {
         check_conv_attributes(op, dims, pad, stride, dilation)?;
         let (ic, kic) = (input.shape[dims + 1], weight.shape[dims + 1]);
         if kic != ic {
-            return Err(Error::ShapeMismatch(format!(
-                "{op}: weight input channels {kic} != input channels {ic}"
-            )));
+            return Err(Error::ShapeMismatch(format!("{op}: weight input channels {kic} != input channels {ic}")));
         }
         let in_sp = input.shape[1..=dims].to_vec();
         let kernel = weight.shape[1..=dims].to_vec();
@@ -298,9 +295,7 @@ impl Transpose {
         let [n, ih, iw, ic] = input.shape[..] else { unreachable!() };
         let [oc, kh, kw, kic] = weight.shape[..] else { unreachable!() };
         if kic != ic {
-            return Err(Error::ShapeMismatch(format!(
-                "{op}: weight input channels {kic} != input channels {ic}"
-            )));
+            return Err(Error::ShapeMismatch(format!("{op}: weight input channels {kic} != input channels {ic}")));
         }
         for (i, &p) in out_pad.iter().enumerate() {
             let k = if i < 2 { kh } else { kw };
@@ -308,9 +303,8 @@ impl Transpose {
                 return Err(invalid(op, format!("out_pad {out_pad:?} must be greater than -kernel size")));
             }
         }
-        let extent = |i: usize, s: i32, a: i32, b: i32, k: usize| {
-            (i as i64 - 1) * s as i64 + a as i64 + b as i64 + k as i64
-        };
+        let extent =
+            |i: usize, s: i32, a: i32, b: i32, k: usize| (i as i64 - 1) * s as i64 + a as i64 + b as i64 + k as i64;
         let oh = extent(ih, stride[0], out_pad[0], out_pad[1], kh);
         let ow = extent(iw, stride[1], out_pad[2], out_pad[3], kw);
         if oh < 1 || ow < 1 {
@@ -467,11 +461,7 @@ fn eval_conv<L: ConvLoop>(
         if acc_t == DType::I32 {
             let to_i32 = |v: Vec<i64>| -> Vec<i32> { v.into_iter().map(|x| x as i32).collect() };
             let acc = g.accumulate::<AccI32>(&to_i32(inp), &to_i32(wgt));
-            let out = acc
-                .iter()
-                .enumerate()
-                .map(|(i, a)| a.0.wrapping_add(bis[bias_idx(i)] as i32))
-                .collect();
+            let out = acc.iter().enumerate().map(|(i, a)| a.0.wrapping_add(bis[bias_idx(i)] as i32)).collect();
             TensorData::I32(out)
         } else {
             let acc = g.accumulate::<AccI64>(&inp, &wgt);
@@ -500,11 +490,8 @@ fn eval_conv<L: ConvLoop>(
             DType::Bf16 => g.accumulate::<AccBf16>(&inp, &wgt).iter().map(|a| a.0).collect(),
             _ => unreachable!("the type tables admit only float accumulators here"),
         };
-        let out = acc
-            .iter()
-            .enumerate()
-            .map(|(i, &a)| round_to(out_t, round_to(out_t, a) + bis[bias_idx(i)]))
-            .collect();
+        let out =
+            acc.iter().enumerate().map(|(i, &a)| round_to(out_t, round_to(out_t, a) + bis[bias_idx(i)])).collect();
         float_data(out_t, out)?
     };
 
@@ -517,9 +504,7 @@ pub fn eval_conv2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let OpAttribute::Conv2d { pad, stride, dilation, acc_type } = &op.attribute else {
         return Err(invalid(OP, "missing attribute"));
     };
-    eval_conv(state, op, OP, *acc_type, conv2d_types, |i, w| {
-        ConvNd::new(OP, 2, i, w, pad, stride, dilation)
-    })
+    eval_conv(state, op, OP, *acc_type, conv2d_types, |i, w| ConvNd::new(OP, 2, i, w, pad, stride, dilation))
 }
 
 pub fn eval_conv3d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
@@ -527,9 +512,7 @@ pub fn eval_conv3d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let OpAttribute::Conv3d { pad, stride, dilation, acc_type } = &op.attribute else {
         return Err(invalid(OP, "missing attribute"));
     };
-    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| {
-        ConvNd::new(OP, 3, i, w, pad, stride, dilation)
-    })
+    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| ConvNd::new(OP, 3, i, w, pad, stride, dilation))
 }
 
 pub fn eval_depthwise_conv2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
@@ -537,9 +520,7 @@ pub fn eval_depthwise_conv2d(state: &mut InterpreterState, op: &Operator) -> Res
     let OpAttribute::DepthwiseConv2d { pad, stride, dilation, acc_type } = &op.attribute else {
         return Err(invalid(OP, "missing attribute"));
     };
-    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| {
-        Depthwise::new(OP, i, w, pad, stride, dilation)
-    })
+    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| Depthwise::new(OP, i, w, pad, stride, dilation))
 }
 
 pub fn eval_transpose_conv2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
@@ -547,7 +528,5 @@ pub fn eval_transpose_conv2d(state: &mut InterpreterState, op: &Operator) -> Res
     let OpAttribute::TransposeConv2d { out_pad, stride, acc_type } = &op.attribute else {
         return Err(invalid(OP, "missing attribute"));
     };
-    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| {
-        Transpose::new(OP, i, w, out_pad, stride)
-    })
+    eval_conv(state, op, OP, *acc_type, standard_types, |i, w| Transpose::new(OP, i, w, out_pad, stride))
 }

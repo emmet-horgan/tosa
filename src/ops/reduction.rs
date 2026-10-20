@@ -10,8 +10,8 @@ use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
 use crate::ir::{DType, NanMode, OpAttribute, Operator};
 use crate::ops::common::{
-    check_declared_output, check_nan_mode, expect_operands, float_data, float_highest, float_lowest,
-    float_values, int_data, int_range, int_values, invalid, nan_max, nan_min, round_to,
+    check_declared_output, check_nan_mode, expect_operands, float_data, float_highest, float_lowest, float_values,
+    int_data, int_range, int_values, invalid, nan_max, nan_min, round_to,
 };
 use crate::tensor::{Tensor, TensorData};
 

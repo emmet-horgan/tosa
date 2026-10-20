@@ -92,9 +92,7 @@ pub fn parse(bytes: &[u8]) -> Result<NpyArray> {
         v => return Err(err(format!("unsupported version {v}"))),
     };
     let data_start = header_start + header_len;
-    let header = bytes
-        .get(header_start..data_start)
-        .ok_or_else(|| err("truncated header"))?;
+    let header = bytes.get(header_start..data_start).ok_or_else(|| err("truncated header"))?;
     let header = std::str::from_utf8(header).map_err(|_| err("header is not UTF-8"))?;
     if header.contains("'fortran_order': True") {
         return Err(err("fortran-ordered arrays are not supported"));
@@ -102,10 +100,8 @@ pub fn parse(bytes: &[u8]) -> Result<NpyArray> {
     let descr = parse_descr(header)?;
     let shape = parse_shape(header)?;
     let len = shape.iter().product::<usize>() * descr.size;
-    let data = bytes
-        .get(data_start..data_start + len)
-        .ok_or_else(|| err(format!("expected {len} bytes of data")))?
-        .to_vec();
+    let data =
+        bytes.get(data_start..data_start + len).ok_or_else(|| err(format!("expected {len} bytes of data")))?.to_vec();
     Ok(NpyArray { descr, shape, data })
 }
 
@@ -168,10 +164,7 @@ impl NpyArray {
     }
 
     fn mismatch(&self, wanted: &str) -> Error {
-        Error::DTypeMismatch(format!(
-            "npy: expected {wanted}, file holds '{}{}'",
-            self.descr.kind, self.descr.size
-        ))
+        Error::DTypeMismatch(format!("npy: expected {wanted}, file holds '{}{}'", self.descr.kind, self.descr.size))
     }
 
     /// Decode the array as elements of TOSA type `dtype`.
@@ -187,20 +180,16 @@ impl NpyArray {
             DType::F32 => TensorData::F32(self.floats()?.into_iter().map(|v| v as f32).collect()),
             DType::F64 => TensorData::F64(self.floats()?),
             DType::F16 => match self.descr.kind {
-                'f' if self.descr.size == 2 => TensorData::F16(
-                    self.uint_bits().map(|u| half::f16::from_bits(u as u16)).collect(),
-                ),
+                'f' if self.descr.size == 2 => {
+                    TensorData::F16(self.uint_bits().map(|u| half::f16::from_bits(u as u16)).collect())
+                }
                 _ => TensorData::F16(self.bits(2)?.into_iter().map(|u| half::f16::from_bits(u as u16)).collect()),
             },
-            DType::Bf16 => TensorData::Bf16(
-                self.bits(2)?.into_iter().map(|u| half::bf16::from_bits(u as u16)).collect(),
-            ),
-            DType::Fp8E4M3 => {
-                TensorData::Fp8E4M3(self.bits(1)?.into_iter().map(|u| Fp8E4M3(u as u8)).collect())
+            DType::Bf16 => {
+                TensorData::Bf16(self.bits(2)?.into_iter().map(|u| half::bf16::from_bits(u as u16)).collect())
             }
-            DType::Fp8E5M2 => {
-                TensorData::Fp8E5M2(self.bits(1)?.into_iter().map(|u| Fp8E5M2(u as u8)).collect())
-            }
+            DType::Fp8E4M3 => TensorData::Fp8E4M3(self.bits(1)?.into_iter().map(|u| Fp8E4M3(u as u8)).collect()),
+            DType::Fp8E5M2 => TensorData::Fp8E5M2(self.bits(1)?.into_iter().map(|u| Fp8E5M2(u as u8)).collect()),
             other => {
                 return Err(Error::DTypeMismatch(format!("npy: cannot decode {other:?} tensors")));
             }

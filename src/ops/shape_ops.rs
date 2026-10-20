@@ -215,8 +215,8 @@ pub fn eval_assert_equal_shape(state: &mut InterpreterState, op: &Operator) -> R
     expect_operands(op, OP, 2, 0)?;
     let a = shape_input(state, OP, &op.inputs[0])?;
     let b = shape_input(state, OP, &op.inputs[1])?;
-    let compatible = a.len() == b.len()
-        && a.iter().zip(&b).all(|(&x, &y)| x == y || (allow_broadcast && (x == 1 || y == 1)));
+    let compatible =
+        a.len() == b.len() && a.iter().zip(&b).all(|(&x, &y)| x == y || (allow_broadcast && (x == 1 || y == 1)));
     if !compatible {
         return Err(invalid(OP, format!("shapes {a:?} and {b:?} differ")));
     }

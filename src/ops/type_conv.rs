@@ -4,8 +4,8 @@ use crate::error::{Error, Result};
 use crate::interpreter::InterpreterState;
 use crate::ir::{DType, OpAttribute, Operator, RoundingMode};
 use crate::ops::common::{
-    check_declared_output, expect_operands, float_data, float_values, int_data, int_range, int_values,
-    invalid, round_to,
+    check_declared_output, expect_operands, float_data, float_values, int_data, int_range, int_values, invalid,
+    round_to,
 };
 use crate::ops::quant::apply_scale_32;
 use crate::tensor::{Tensor, TensorData};
@@ -85,9 +85,7 @@ pub fn eval_cast(state: &mut InterpreterState, op: &Operator) -> Result<()> {
 /// `round(value * multiplier / 2^shift)` with a 16-bit multiplier.
 fn apply_scale_16(value: i64, multiplier: i16, shift: i32) -> Result<i32> {
     if multiplier < 0 || !(2..=62).contains(&shift) {
-        return Err(Error::GraphError(format!(
-            "apply_scale_16: invalid multiplier {multiplier} or shift {shift}"
-        )));
+        return Err(Error::GraphError(format!("apply_scale_16: invalid multiplier {multiplier} or shift {shift}")));
     }
     let result = (value * multiplier as i64 + (1i64 << (shift - 1))) >> shift;
     i32::try_from(result).map_err(|_| Error::GraphError("apply_scale_16: result exceeds int32".into()))
@@ -123,7 +121,8 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let in_zp = state.get_tensor(&op.inputs[3])?;
     let out_zp = state.get_tensor(&op.inputs[4])?;
     let shape = input.shape.clone();
-    let (in_t, out_t) = (input.dtype(), check_declared_output(state, OP, &op.outputs[0], &shape)?.unwrap_or(DType::I32));
+    let (in_t, out_t) =
+        (input.dtype(), check_declared_output(state, OP, &op.outputs[0], &shape)?.unwrap_or(DType::I32));
 
     use DType::*;
     if !matches!(in_t, I8 | I16 | I32 | I48) || !matches!(out_t, I8 | I16 | I32) {
@@ -154,11 +153,8 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     if in_zp.dtype() != in_t || out_zp.dtype() != out_t || in_zp.data.len() != 1 || out_zp.data.len() != 1 {
         return Err(invalid(OP, "zero points must be single elements of the input/output types"));
     }
-    let channels = if per_channel {
-        *shape.last().ok_or_else(|| invalid(OP, "per_channel requires rank >= 1"))?
-    } else {
-        1
-    };
+    let channels =
+        if per_channel { *shape.last().ok_or_else(|| invalid(OP, "per_channel requires rank >= 1"))? } else { 1 };
     if multiplier.data.len() != channels || shift.data.len() != channels {
         return Err(invalid(OP, format!("multiplier and shift must have {channels} elements")));
     }
@@ -180,9 +176,7 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         let (m, s) = (multipliers[ch] as i32, shifts[ch] as i32);
         let x = extend(in_t, v, input_unsigned) - in_zp;
         let scaled = match rounding_mode {
-            RoundingMode::Inexact => {
-                (x as f32 * m as f32 * libm::ldexpf(1.0, -s)).round_ties_even() as i32
-            }
+            RoundingMode::Inexact => (x as f32 * m as f32 * libm::ldexpf(1.0, -s)).round_ties_even() as i32,
             _ if scale32 => apply_scale_32(x as i32, m, s, rounding_mode == RoundingMode::Double)?,
             _ => apply_scale_16(x, m as i16, s)?,
         };

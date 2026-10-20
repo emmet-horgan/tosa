@@ -49,9 +49,7 @@ fn input_signature(state: &InterpreterState, name: &str) -> Result<(DType, Vec<i
 
 /// Element type and shape of an operator output (from its declaration).
 fn output_signature(state: &InterpreterState, op: &str, name: &str) -> Result<(DType, Vec<i32>)> {
-    let def = state
-        .find_tensor_def(name)
-        .ok_or_else(|| invalid(op, format!("output '{name}' is not declared")))?;
+    let def = state.find_tensor_def(name).ok_or_else(|| invalid(op, format!("output '{name}' is not declared")))?;
     Ok((def.dtype, def.shape.clone()))
 }
 
@@ -64,7 +62,10 @@ fn check_block(
     outputs: Option<&[String]>,
 ) -> Result<()> {
     if block.inputs.len() != inputs.len() {
-        return Err(invalid(op, format!("sub-graph '{}' takes {} inputs, got {}", block.name, block.inputs.len(), inputs.len())));
+        return Err(invalid(
+            op,
+            format!("sub-graph '{}' takes {} inputs, got {}", block.name, block.inputs.len(), inputs.len()),
+        ));
     }
     for (name, block_input) in inputs.iter().zip(&block.inputs) {
         let (dtype, shape) = input_signature(state, name)?;
@@ -74,7 +75,12 @@ fn check_block(
         if block.outputs.len() != outputs.len() {
             return Err(invalid(
                 op,
-                format!("sub-graph '{}' produces {} outputs, expected {}", block.name, block.outputs.len(), outputs.len()),
+                format!(
+                    "sub-graph '{}' produces {} outputs, expected {}",
+                    block.name,
+                    block.outputs.len(),
+                    outputs.len()
+                ),
             ));
         }
         for (name, block_output) in outputs.iter().zip(&block.outputs) {
@@ -160,9 +166,7 @@ pub fn eval_while_loop(state: &mut InterpreterState, op: &Operator) -> Result<()
         }
     }
     if !finished {
-        return Err(Error::ControlFlow(format!(
-            "{OP}: no termination after {MAX_WHILE_LOOP_ITERATIONS} iterations"
-        )));
+        return Err(Error::ControlFlow(format!("{OP}: no termination after {MAX_WHILE_LOOP_ITERATIONS} iterations")));
     }
     for (c, output) in carried.iter().zip(&op.outputs) {
         state.rename_tensor(c, output);

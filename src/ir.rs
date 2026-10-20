@@ -64,17 +64,11 @@ impl DType {
     }
 
     pub fn is_float(self) -> bool {
-        matches!(
-            self,
-            DType::Fp8E4M3 | DType::Fp8E5M2 | DType::F16 | DType::Bf16 | DType::F32 | DType::F64
-        )
+        matches!(self, DType::Fp8E4M3 | DType::Fp8E5M2 | DType::F16 | DType::Bf16 | DType::F32 | DType::F64)
     }
 
     pub fn is_int(self) -> bool {
-        matches!(
-            self,
-            DType::I4 | DType::I8 | DType::I16 | DType::I32 | DType::I48 | DType::I64
-        )
+        matches!(self, DType::I4 | DType::I8 | DType::I16 | DType::I32 | DType::I48 | DType::I64)
     }
 }
 
@@ -596,8 +590,8 @@ pub struct Graph {
 
 impl Graph {
     pub fn from_flatbuffer(data: &[u8]) -> Result<Self> {
-        let fb_graph = flatbuffers::root::<generated::TosaGraph>(data)
-            .map_err(|e| Error::Deserialize(format!("{e}")))?;
+        let fb_graph =
+            flatbuffers::root::<generated::TosaGraph>(data).map_err(|e| Error::Deserialize(format!("{e}")))?;
 
         let mut regions = Vec::new();
 
@@ -612,10 +606,7 @@ impl Graph {
                     }
                 }
 
-                regions.push(Region {
-                    name: region_name,
-                    blocks,
-                });
+                regions.push(Region { name: region_name, blocks });
             }
         }
 
@@ -629,21 +620,12 @@ impl Graph {
         if let Some(fb_tensors) = fb_block.tensors() {
             for fb_tensor in fb_tensors.iter() {
                 let tensor_name = fb_tensor.name().unwrap_or("").to_string();
-                let shape: Vec<i32> = fb_tensor
-                    .shape()
-                    .map(|s| s.iter().collect())
-                    .unwrap_or_default();
+                let shape: Vec<i32> = fb_tensor.shape().map(|s| s.iter().collect()).unwrap_or_default();
                 let dtype = DType::from_fb(fb_tensor.type_());
                 let data = fb_tensor.data().map(|d| d.bytes().to_vec());
                 let is_variable = fb_tensor.variable();
 
-                tensors.push(TensorDef {
-                    name: tensor_name,
-                    shape,
-                    dtype,
-                    data,
-                    is_variable,
-                });
+                tensors.push(TensorDef { name: tensor_name, shape, dtype, data, is_variable });
             }
         }
 
@@ -669,42 +651,23 @@ impl Graph {
         if let Some(fb_ops) = fb_block.operators() {
             for fb_op in fb_ops.iter() {
                 let op = Op::from_fb(fb_op.op());
-                let inputs: Vec<String> = fb_op
-                    .inputs()
-                    .map(|v| v.iter().map(|s| s.to_string()).collect())
-                    .unwrap_or_default();
-                let outputs: Vec<String> = fb_op
-                    .outputs()
-                    .map(|v| v.iter().map(|s| s.to_string()).collect())
-                    .unwrap_or_default();
+                let inputs: Vec<String> =
+                    fb_op.inputs().map(|v| v.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
+                let outputs: Vec<String> =
+                    fb_op.outputs().map(|v| v.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
 
                 let attribute = Self::parse_attribute(&fb_op);
 
-                operators.push(Operator {
-                    op,
-                    inputs,
-                    outputs,
-                    attribute,
-                });
+                operators.push(Operator { op, inputs, outputs, attribute });
             }
         }
 
-        let block_inputs: Vec<String> = fb_block
-            .inputs()
-            .map(|v| v.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_default();
-        let block_outputs: Vec<String> = fb_block
-            .outputs()
-            .map(|v| v.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_default();
+        let block_inputs: Vec<String> =
+            fb_block.inputs().map(|v| v.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
+        let block_outputs: Vec<String> =
+            fb_block.outputs().map(|v| v.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
 
-        Ok(BasicBlock {
-            name,
-            operators,
-            tensors,
-            inputs: block_inputs,
-            outputs: block_outputs,
-        })
+        Ok(BasicBlock { name, operators, tensors, inputs: block_inputs, outputs: block_outputs })
     }
 
     fn parse_attribute(fb_op: &generated::TosaOperator<'_>) -> OpAttribute {
@@ -884,23 +847,15 @@ impl Graph {
             generated::Attribute::ClampAttribute => {
                 if let Some(attr) = fb_op.attribute_as_clamp_attribute() {
                     return OpAttribute::Clamp {
-                        min_val: attr
-                            .min_val()
-                            .map(|v| v.bytes().to_vec())
-                            .unwrap_or_default(),
-                        max_val: attr
-                            .max_val()
-                            .map(|v| v.bytes().to_vec())
-                            .unwrap_or_default(),
+                        min_val: attr.min_val().map(|v| v.bytes().to_vec()).unwrap_or_default(),
+                        max_val: attr.max_val().map(|v| v.bytes().to_vec()).unwrap_or_default(),
                         nan_mode: NanMode::from_fb(attr.nan_mode()),
                     };
                 }
             }
             generated::Attribute::ArithmeticRightShiftAttribute => {
                 if let Some(attr) = fb_op.attribute_as_arithmetic_right_shift_attribute() {
-                    return OpAttribute::ArithmeticRightShift {
-                        round: attr.round(),
-                    };
+                    return OpAttribute::ArithmeticRightShift { round: attr.round() };
                 }
             }
             generated::Attribute::RescaleAttribute => {
@@ -921,9 +876,7 @@ impl Graph {
             }
             generated::Attribute::ResizeAttribute => {
                 if let Some(attr) = fb_op.attribute_as_resize_attribute() {
-                    return OpAttribute::Resize {
-                        mode: attr.mode().0,
-                    };
+                    return OpAttribute::Resize { mode: attr.mode().0 };
                 }
             }
             _ => {}

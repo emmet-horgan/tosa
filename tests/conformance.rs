@@ -113,9 +113,7 @@ fn abs_sum(data: &TensorData) -> f64 {
 
 /// Distance in representable values between two floats given as sign-magnitude bits.
 fn ulp_distance(a: u64, b: u64, sign_bit: u64) -> u64 {
-    let ordinal = |x: u64| -> i128 {
-        if x & sign_bit != 0 { -((x & !sign_bit) as i128) } else { x as i128 }
-    };
+    let ordinal = |x: u64| -> i128 { if x & sign_bit != 0 { -((x & !sign_bit) as i128) } else { x as i128 } };
     (ordinal(a) - ordinal(b)).unsigned_abs() as u64
 }
 
@@ -146,10 +144,7 @@ fn collect_cases(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn tensor_dtypes(graph: &Graph) -> HashMap<&str, DType> {
-    graph
-        .main_block()
-        .map(|b| b.tensors.iter().map(|t| (t.name.as_str(), t.dtype)).collect())
-        .unwrap_or_default()
+    graph.main_block().map(|b| b.tensors.iter().map(|t| (t.name.as_str(), t.dtype)).collect()).unwrap_or_default()
 }
 
 /// Largest deviation seen while comparing a tensor (for `TOSA_CONFORMANCE_VERBOSE`).
@@ -185,11 +180,8 @@ fn compare(
         if bad.is_empty() {
             return Ok(());
         }
-        let shown: Vec<String> = bad
-            .iter()
-            .take(8)
-            .map(|&i| format!("  [{i}] got {:?}, expected {:?}", a[i], e[i]))
-            .collect();
+        let shown: Vec<String> =
+            bad.iter().take(8).map(|&i| format!("  [{i}] got {:?}, expected {:?}", a[i], e[i])).collect();
         Err(format!("{} of {} elements differ:\n{}", bad.len(), a.len(), shown.join("\n")))
     }
     let mut close = |a: Fp, e: Fp| -> bool {
@@ -246,9 +238,7 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
         let dtypes = tensor_dtypes(interp.graph());
         let mut inputs = HashMap::new();
         for (name, file) in desc.ifm_name.iter().zip(&desc.ifm_file) {
-            let dtype = *dtypes
-                .get(name.as_str())
-                .ok_or_else(|| tosa_interp::Error::TensorNotFound(name.clone()))?;
+            let dtype = *dtypes.get(name.as_str()).ok_or_else(|| tosa_interp::Error::TensorNotFound(name.clone()))?;
             let arr = npy::read(&dir.join(file))?;
             let data = arr.to_tensor_data(dtype)?;
             input_abs_sum += abs_sum(&data);
@@ -309,19 +299,15 @@ fn main() {
         collect_cases(&root, &mut found);
         cases.extend(found.into_iter().map(|p| {
             let name = prefix.to_string()
-                + &p
-                .strip_prefix(&root)
-                .unwrap_or(&p)
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("::");
+                + &p.strip_prefix(&root)
+                    .unwrap_or(&p)
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("::");
             (name, p)
         }));
     }
-    let trials = cases
-        .into_iter()
-        .map(|(name, dir)| Trial::test(name, move || run_case(&dir)))
-        .collect();
+    let trials = cases.into_iter().map(|(name, dir)| Trial::test(name, move || run_case(&dir))).collect();
     libtest_mimic::run(&args, trials).exit();
 }

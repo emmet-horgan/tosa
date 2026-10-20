@@ -14,8 +14,8 @@ use crate::interpreter::InterpreterState;
 use crate::ir::{DType, Operator};
 use crate::ops::accum::{AccBf16UnroundedProduct, AccF16UnroundedProduct, AccF32, AccI32, AccI64, Accumulator};
 use crate::ops::common::{
-    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_values, invalid,
-    round_to, single_value,
+    check_declared_output, expect_operands, expect_rank, float_data, float_values, int_values, invalid, round_to,
+    single_value,
 };
 use crate::tensor::{Tensor, TensorData};
 
@@ -74,11 +74,7 @@ struct Dims {
 impl Dims {
     fn b_index(&self, n: usize, k: usize, col: usize) -> usize {
         let n = if self.b_broadcast { 0 } else { n };
-        if self.b_transposed {
-            (n * self.w + col) * self.c + k
-        } else {
-            (n * self.c + k) * self.w + col
-        }
+        if self.b_transposed { (n * self.w + col) * self.c + k } else { (n * self.c + k) * self.w + col }
     }
 
     fn run<A: Accumulator>(&self, a: &[A::Operand], b: &[A::Operand]) -> Vec<A> {
@@ -116,11 +112,8 @@ fn eval(
     expect_rank(name, "a", a, 3)?;
     expect_rank(name, "b", b, 3)?;
     let [n, h, c] = a.shape[..] else { unreachable!() };
-    let (bn, bc, w) = if transposed {
-        (b.shape[0], b.shape[2], b.shape[1])
-    } else {
-        (b.shape[0], b.shape[1], b.shape[2])
-    };
+    let (bn, bc, w) =
+        if transposed { (b.shape[0], b.shape[2], b.shape[1]) } else { (b.shape[0], b.shape[1], b.shape[2]) };
     if bc != c || (bn != n && !(transposed && bn == 1)) {
         return Err(Error::ShapeMismatch(format!(
             "{name}: b shape {:?} incompatible with a shape {:?}",
@@ -133,9 +126,7 @@ fn eval(
     let (a_t, b_t) = (a.dtype(), b.dtype());
     let out_t = check_declared_output(state, name, output_name, &out_shape)?.unwrap_or_else(|| default_output(a_t));
     if !types_ok(a_t, b_t, out_t) {
-        return Err(Error::DTypeMismatch(format!(
-            "{name}: unsupported types a={a_t:?} b={b_t:?} output={out_t:?}"
-        )));
+        return Err(Error::DTypeMismatch(format!("{name}: unsupported types a={a_t:?} b={b_t:?} output={out_t:?}")));
     }
     if a_zp.dtype() != a_t || b_zp.dtype() != b_t {
         return Err(Error::DTypeMismatch(format!(

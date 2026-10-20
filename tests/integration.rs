@@ -53,11 +53,7 @@ fn load_case(name: &str) -> Case {
             })
             .collect()
     };
-    Case {
-        inputs: load(&desc.ifm_name, &desc.ifm_file),
-        expected: load(&desc.ofm_name, &desc.ofm_file),
-        graph,
-    }
+    Case { inputs: load(&desc.ifm_name, &desc.ifm_file), expected: load(&desc.ofm_name, &desc.ofm_file), graph }
 }
 
 /// Number of operators in the graph's main block.
