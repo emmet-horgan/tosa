@@ -224,15 +224,15 @@ pub fn eval_exp(state: &mut InterpreterState, op: &Operator) -> Result<()> {
 }
 
 pub fn eval_log(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    float_unary(state, op, "LOG", f32::ln)
+    float_unary(state, op, "LOG", libm::logf)
 }
 
 pub fn eval_sin(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    float_unary(state, op, "SIN", f32::sin)
+    float_unary(state, op, "SIN", libm::sinf)
 }
 
 pub fn eval_cos(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    float_unary(state, op, "COS", f32::cos)
+    float_unary(state, op, "COS", libm::cosf)
 }
 
 pub fn eval_reciprocal(state: &mut InterpreterState, op: &Operator) -> Result<()> {
@@ -249,7 +249,7 @@ pub fn eval_erf(state: &mut InterpreterState, op: &Operator) -> Result<()> {
 }
 
 pub fn eval_sigmoid(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    float_unary(state, op, "SIGMOID", |x| 1.0 / (1.0 + (-x).exp()))
+    float_unary(state, op, "SIGMOID", |x| 1.0 / (1.0 + math::expf(-x)))
 }
 
 pub fn eval_tanh(state: &mut InterpreterState, op: &Operator) -> Result<()> {
@@ -265,7 +265,7 @@ pub fn eval_tanh(state: &mut InterpreterState, op: &Operator) -> Result<()> {
             if x == 0.0 {
                 return x;
             }
-            let e = (-2.0 * x).exp();
+            let e = math::expf(-2.0 * x);
             (1.0 - e).clamp(-max, max) / (1.0 + e).clamp(-max, max)
         })
     })
@@ -417,7 +417,7 @@ pub fn eval_minimum(state: &mut InterpreterState, op: &Operator) -> Result<()> {
 }
 
 pub fn eval_pow(state: &mut InterpreterState, op: &Operator) -> Result<()> {
-    eval_binary(state, op, "POW", FLOATS, None, Some(&|x, y| (y * x.ln()).exp()), None)
+    eval_binary(state, op, "POW", FLOATS, None, Some(&|x, y| math::expf(y * libm::logf(x))), None)
 }
 
 pub fn eval_intdiv(state: &mut InterpreterState, op: &Operator) -> Result<()> {

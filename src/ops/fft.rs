@@ -72,7 +72,7 @@ pub fn eval_fft2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
                     for ix in 0..w {
                         let i = (b * h + iy) * w + ix;
                         let a = angle(sign, iy, ix, oy, ox, h, w);
-                        let (s, c) = (a.sin(), a.cos());
+                        let (s, c) = (libm::sinf(a), libm::cosf(a));
                         sum_re += re[i] * c + im[i] * s;
                         sum_im += -re[i] * s + im[i] * c;
                     }
@@ -107,14 +107,14 @@ pub fn eval_rfft2d(state: &mut InterpreterState, op: &Operator) -> Result<()> {
                     for ix in 0..w {
                         let v = x[(b * h + iy) * w + ix];
                         let a = angle(1.0, iy, ix, oy, ox, h, w);
-                        sum_re += v * a.cos();
+                        sum_re += v * libm::cosf(a);
                         // The imaginary parts at (0,0), (0,W/2), (H/2,0) and
                         // (H/2,W/2) are exactly zero; sin(pi) is not, so they
                         // are skipped.
                         let in_scope = (h > 1 && ((iy * oy) % h) % half_h > 0)
                             || (w > 1 && ((ix * ox) % w) % half_w > 0);
                         if in_scope {
-                            sum_im += -v * a.sin();
+                            sum_im += -v * libm::sinf(a);
                         }
                     }
                 }

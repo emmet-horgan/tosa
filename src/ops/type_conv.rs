@@ -181,7 +181,7 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         let x = extend(in_t, v, input_unsigned) - in_zp;
         let scaled = match rounding_mode {
             RoundingMode::Inexact => {
-                (x as f32 * m as f32 * (-(s as f32)).exp2()).round_ties_even() as i32
+                (x as f32 * m as f32 * libm::ldexpf(1.0, -s)).round_ties_even() as i32
             }
             _ if scale32 => apply_scale_32(x as i32, m, s, rounding_mode == RoundingMode::Double)?,
             _ => apply_scale_16(x, m as i16, s)?,
