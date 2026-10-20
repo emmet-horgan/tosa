@@ -1,0 +1,10 @@
+# Store and check out text files with LF on every platform, so files written on
+# Windows (e.g. regenerated conformance cases) do not produce line-ending diffs.
+* text=auto eol=lf
+
+# Test data and graphs.
+*.npy binary
+*.tosa binary
+
+# Checked-in flatc output; regenerate with `cargo xtask codegen`.
+src/generated/*.rs linguist-generated=true
