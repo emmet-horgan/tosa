@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["tosa-tools==2026.8.0"]
+# ///
 """Summarise conformance coverage per operator for docs/OPERATOR_STATUS.md.
 
 For every operator with a suite under ``tests/conformance`` this reports:
@@ -13,10 +17,9 @@ For every operator with a suite under ``tests/conformance`` this reports:
 
 The generated table replaces the text between the ``BEGIN GENERATED`` and
 ``END GENERATED`` markers of the status document. Run from the repository
-root with the tosa-tools environment:
+root (needs ``cargo`` and the ``tosa-tools`` wheel, which uv installs):
 
-    .venv\\Scripts\\python scripts\\conformance_report.py      # Windows
-    .venv/bin/python scripts/conformance_report.py            # Linux/macOS
+    uv run scripts/conformance_report.py
 
 Spec listings are cached in ``target/conformance-spec.json``; pass
 ``--refresh-spec`` to rebuild them.

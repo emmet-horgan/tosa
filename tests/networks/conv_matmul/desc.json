@@ -1,0 +1,22 @@
+{
+ "tosa_file": "conv_matmul.tosa",
+ "ifm_name": [
+  "input_0",
+  "conv_w",
+  "conv_b",
+  "matmul_w"
+ ],
+ "ifm_file": [
+  "input_0.npy",
+  "conv_w.npy",
+  "conv_b.npy",
+  "matmul_w.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false
+}

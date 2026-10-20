@@ -8,12 +8,18 @@
 //! rejected by the interpreter.
 //!
 //! Outputs are compared bit for bit; any two NaNs are considered equal. The
-//! one exception is a tensor whose compliance mode (in the test's `meta`) is
-//! `ULP` with a bound of at least one ULP: the specification then allows
-//! implementations to differ, and the reference model itself uses the
-//! platform's libm (e.g. ERF), so a difference of up to that many ULPs from
-//! the reference output is accepted. Set `TOSA_CONFORMANCE_STRICT=1` to
-//! require bit-exact results everywhere.
+//! exceptions are operators the reference model evaluates with the host C
+//! library's transcendental functions (ERF, LOG, POW, SIN, COS, FFT2D,
+//! RFFT2D): their reference outputs differ by a few ULPs between Windows,
+//! Linux and macOS, so a small, spec-sized error is accepted (see
+//! [`tolerance`]). Set `TOSA_CONFORMANCE_STRICT=1` to require bit-exact
+//! results everywhere, and `TOSA_CONFORMANCE_VERBOSE=1` to print the largest
+//! deviation of every inexact output.
+//!
+//! `tests/networks/` holds multi-operator graphs (small networks and models
+//! converted by TensorFlow / TFLite legalization) in the same format; their
+//! tests are named `networks::<case>` and must match exactly. Refresh their
+//! reference outputs with `scripts/refresh_networks.py`.
 //!
 //! Set `TOSA_CONFORMANCE_DIR` (a list separated like `PATH`) to run test
 //! cases from other directories instead, e.g. the full suite generated with
@@ -24,7 +30,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use tosa_interp::{DType, Graph, Interpreter, NoopHook, Tensor, TensorData, npy};
+use tosa_interp::{DType, Graph, Interpreter, NoopHook, Op, Tensor, TensorData, npy};
 
 #[derive(serde::Deserialize)]
 struct Desc {
@@ -39,16 +45,70 @@ struct Desc {
     meta: serde_json::Value,
 }
 
-/// Accepted ULP difference for output tensor `name` (0 = bit-exact).
-fn ulp_tolerance(desc: &Desc, name: &str) -> u64 {
+/// How closely an output must match the reference model.
+#[derive(Clone, Copy, Debug)]
+enum Tolerance {
+    /// Bit-exact (any two NaNs compare equal).
+    Exact,
+    /// Within this many units in the last place of the expected value.
+    Ulp(u64),
+    /// `|actual - expected| <= bound`.
+    Abs(f64),
+}
+
+/// Operators whose reference result depends on the host C library's
+/// transcendental functions (`erf`, `logf`, `sinf`, `cosf`), which differ by a
+/// few ULPs between platforms (glibc, Apple libm and the MSVC CRT). The
+/// interpreter uses the portable `libm` crate instead, so it cannot match every
+/// platform bit for bit; the specification only requires these to be within
+/// an error bound of a few ULPs. The bound is the larger of the one in the
+/// test's compliance meta (ULP mode) and the figure below. EXP, SIGMOID and
+/// TANH are not listed: the reference bundles its own `expf`, which the
+/// interpreter reproduces exactly.
+const ULP_OPS: &[(&str, u64)] = &[("ERF", 5), ("LOG", 2), ("POW", 2), ("SIN", 2), ("COS", 2)];
+
+/// FFT outputs are sums of products with twiddle factors; the allowed error
+/// scales with the magnitude of the inputs (2^-20 x sum of |x|).
+const FFT_REL_EPS: f64 = 1.0 / (1u64 << 20) as f64;
+
+/// The single non-constant operator of a test graph, if there is exactly one.
+fn tested_op(graph: &Graph) -> Option<&'static str> {
+    let block = graph.main_block()?;
+    let mut ops = block.operators.iter().filter(|o| !matches!(o.op, Op::Const | Op::ConstShape));
+    let op = ops.next()?;
+    ops.next().is_none().then(|| op.op.name())
+}
+
+/// Tolerance for output `name` of a single-operator test of `op`; graphs with
+/// several operators (e.g. networks) must match exactly.
+fn tolerance(desc: &Desc, op: Option<&str>, name: &str, input_abs_sum: f64) -> Tolerance {
     if std::env::var_os("TOSA_CONFORMANCE_STRICT").is_some() {
-        return 0;
+        return Tolerance::Exact;
     }
-    let c = &desc.meta["compliance"]["tensors"][name];
-    if c["mode"] != "ULP" {
-        return 0;
+    match op {
+        Some("FFT2D" | "RFFT2D") => Tolerance::Abs(FFT_REL_EPS * input_abs_sum),
+        Some(op) => match ULP_OPS.iter().find(|(o, _)| *o == op) {
+            Some(&(_, default)) => {
+                let c = &desc.meta["compliance"]["tensors"][name];
+                let meta = (c["mode"] == "ULP").then(|| c["ulp_info"]["ulp"].as_f64()).flatten();
+                Tolerance::Ulp(meta.map_or(default, |u| (u.floor() as u64).max(default)))
+            }
+            None => Tolerance::Exact,
+        },
+        None => Tolerance::Exact,
     }
-    c["ulp_info"]["ulp"].as_f64().map_or(0, |u| u.floor() as u64)
+}
+
+/// Sum of the absolute values of a floating-point tensor (0 for other types).
+fn abs_sum(data: &TensorData) -> f64 {
+    use TensorData as T;
+    match data {
+        T::F16(v) => v.iter().map(|x| f64::from(x.to_f32()).abs()).sum(),
+        T::Bf16(v) => v.iter().map(|x| f64::from(x.to_f32()).abs()).sum(),
+        T::F32(v) => v.iter().map(|x| f64::from(*x).abs()).sum(),
+        T::F64(v) => v.iter().map(|x| x.abs()).sum(),
+        _ => 0.0,
+    }
 }
 
 /// Distance in representable values between two floats given as sign-magnitude bits.
@@ -59,10 +119,14 @@ fn ulp_distance(a: u64, b: u64, sign_bit: u64) -> u64 {
     (ordinal(a) - ordinal(b)).unsigned_abs() as u64
 }
 
-fn roots() -> Vec<PathBuf> {
+/// Directories to search for test cases, each with a prefix for the test names.
+fn roots() -> Vec<(PathBuf, &'static str)> {
     match std::env::var("TOSA_CONFORMANCE_DIR") {
-        Ok(v) => std::env::split_paths(&v).collect(),
-        Err(_) => vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/conformance")],
+        Ok(v) => std::env::split_paths(&v).map(|p| (p, "")).collect(),
+        Err(_) => {
+            let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+            vec![(tests.join("conformance"), ""), (tests.join("networks"), "networks::")]
+        }
     }
 }
 
@@ -88,12 +152,31 @@ fn tensor_dtypes(graph: &Graph) -> HashMap<&str, DType> {
         .unwrap_or_default()
 }
 
-/// Element-wise bit comparison; returns a description of the first mismatches.
-fn compare(actual: &TensorData, expected: &TensorData, ulps: u64) -> std::result::Result<(), String> {
-    fn diff<T: PartialEq + std::fmt::Debug>(
+/// Largest deviation seen while comparing a tensor (for `TOSA_CONFORMANCE_VERBOSE`).
+#[derive(Default)]
+struct Deviation {
+    ulps: u64,
+    abs: f64,
+}
+
+/// One floating-point element: raw bits, its format's sign bit and its value.
+struct Fp {
+    bits: u64,
+    sign: u64,
+    value: f64,
+}
+
+/// Element-wise comparison; returns a description of the first mismatches.
+fn compare(
+    actual: &TensorData,
+    expected: &TensorData,
+    tol: Tolerance,
+    dev: &mut Deviation,
+) -> std::result::Result<(), String> {
+    fn diff<T: std::fmt::Debug>(
         a: &[T],
         e: &[T],
-        same: impl Fn(&T, &T) -> bool,
+        mut same: impl FnMut(&T, &T) -> bool,
     ) -> std::result::Result<(), String> {
         if a.len() != e.len() {
             return Err(format!("element count {} != expected {}", a.len(), e.len()));
@@ -109,9 +192,23 @@ fn compare(actual: &TensorData, expected: &TensorData, ulps: u64) -> std::result
             .collect();
         Err(format!("{} of {} elements differ:\n{}", bad.len(), a.len(), shown.join("\n")))
     }
-    // Equal bits, both NaN, or (when allowed) within `ulps` of each other.
-    let close = |a: u64, b: u64, a_nan: bool, b_nan: bool, sign: u64| {
-        a == b || (a_nan && b_nan) || (ulps > 0 && !a_nan && !b_nan && ulp_distance(a, b, sign) <= ulps)
+    let mut close = |a: Fp, e: Fp| -> bool {
+        let (a_nan, e_nan) = (a.value.is_nan(), e.value.is_nan());
+        if a.bits == e.bits || (a_nan && e_nan) {
+            return true;
+        }
+        if a_nan || e_nan {
+            return false;
+        }
+        let ulps = ulp_distance(a.bits, e.bits, a.sign);
+        let abs = (a.value - e.value).abs();
+        dev.ulps = dev.ulps.max(ulps);
+        dev.abs = dev.abs.max(abs);
+        match tol {
+            Tolerance::Exact => false,
+            Tolerance::Ulp(n) => ulps <= n,
+            Tolerance::Abs(bound) => abs <= bound,
+        }
     };
     use TensorData as T;
     match (actual, expected) {
@@ -120,24 +217,21 @@ fn compare(actual: &TensorData, expected: &TensorData, ulps: u64) -> std::result
         (T::I16(a), T::I16(e)) => diff(a, e, PartialEq::eq),
         (T::I32(a), T::I32(e)) => diff(a, e, PartialEq::eq),
         (T::I48(a), T::I48(e)) | (T::I64(a), T::I64(e)) => diff(a, e, PartialEq::eq),
-        (T::Fp8E4M3(a), T::Fp8E4M3(e)) => {
-            diff(a, e, |x, y| x == y || (x.is_nan() && y.is_nan()))
-        }
-        (T::Fp8E5M2(a), T::Fp8E5M2(e)) => {
-            diff(a, e, |x, y| x == y || (x.is_nan() && y.is_nan()))
-        }
-        (T::F16(a), T::F16(e)) => {
-            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000))
-        }
-        (T::Bf16(a), T::Bf16(e)) => {
-            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000))
-        }
-        (T::F32(a), T::F32(e)) => {
-            diff(a, e, |x, y| close(x.to_bits() as u64, y.to_bits() as u64, x.is_nan(), y.is_nan(), 0x8000_0000))
-        }
-        (T::F64(a), T::F64(e)) => {
-            diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()))
-        }
+        (T::Fp8E4M3(a), T::Fp8E4M3(e)) => diff(a, e, |x, y| x == y || (x.is_nan() && y.is_nan())),
+        (T::Fp8E5M2(a), T::Fp8E5M2(e)) => diff(a, e, |x, y| x == y || (x.is_nan() && y.is_nan())),
+        (T::F16(a), T::F16(e)) => diff(a, e, |x, y| {
+            let fp = |v: &half::f16| Fp { bits: v.to_bits().into(), sign: 0x8000, value: v.to_f64() };
+            close(fp(x), fp(y))
+        }),
+        (T::Bf16(a), T::Bf16(e)) => diff(a, e, |x, y| {
+            let fp = |v: &half::bf16| Fp { bits: v.to_bits().into(), sign: 0x8000, value: v.to_f64() };
+            close(fp(x), fp(y))
+        }),
+        (T::F32(a), T::F32(e)) => diff(a, e, |x, y| {
+            let fp = |v: &f32| Fp { bits: v.to_bits().into(), sign: 0x8000_0000, value: f64::from(*v) };
+            close(fp(x), fp(y))
+        }),
+        (T::F64(a), T::F64(e)) => diff(a, e, |x, y| x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())),
         _ => Err(format!("dtype {:?} != expected {:?}", actual.dtype(), expected.dtype())),
     }
 }
@@ -146,7 +240,8 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
     let desc: Desc = serde_json::from_str(&std::fs::read_to_string(dir.join("desc.json"))?)?;
     let graph_bytes = std::fs::read(dir.join(&desc.tosa_file))?;
 
-    let run = || -> tosa_interp::Result<HashMap<String, Tensor>> {
+    let mut input_abs_sum = 0.0;
+    let mut run = || -> tosa_interp::Result<HashMap<String, Tensor>> {
         let interp = Interpreter::from_flatbuffer(&graph_bytes)?;
         let dtypes = tensor_dtypes(interp.graph());
         let mut inputs = HashMap::new();
@@ -156,6 +251,7 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
                 .ok_or_else(|| tosa_interp::Error::TensorNotFound(name.clone()))?;
             let arr = npy::read(&dir.join(file))?;
             let data = arr.to_tensor_data(dtype)?;
+            input_abs_sum += abs_sum(&data);
             inputs.insert(name.clone(), Tensor::new(name.clone(), arr.shape, data));
         }
         interp.run(inputs, &mut NoopHook)
@@ -177,6 +273,8 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
 
     let graph = Graph::from_flatbuffer(&graph_bytes)?;
     let dtypes = tensor_dtypes(&graph);
+    let op = tested_op(&graph);
+    let verbose = std::env::var_os("TOSA_CONFORMANCE_VERBOSE").is_some();
     for (name, file) in desc.ofm_name.iter().zip(&desc.ofm_file) {
         let actual = outputs.get(name).ok_or_else(|| format!("output {name} was not produced"))?;
         let dtype = dtypes[name.as_str()];
@@ -185,7 +283,20 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
             return Err(format!("{name}: shape {:?} != expected {:?}", actual.shape, arr.shape).into());
         }
         let expected = arr.to_tensor_data(dtype)?;
-        compare(&actual.data, &expected, ulp_tolerance(&desc, name)).map_err(|m| format!("{name}: {m}"))?;
+        let tol = tolerance(&desc, op, name, input_abs_sum);
+        let mut dev = Deviation::default();
+        let res = compare(&actual.data, &expected, tol, &mut dev);
+        if verbose && (dev.ulps > 0 || dev.abs > 0.0) {
+            let rel = if input_abs_sum > 0.0 { dev.abs / input_abs_sum } else { 0.0 };
+            eprintln!(
+                "{}: {name}: max deviation {} ulp, {:e} abs ({:e} x sum|inputs|), allowed {tol:?}",
+                dir.display(),
+                dev.ulps,
+                dev.abs,
+                rel
+            );
+        }
+        res.map_err(|m| format!("{name}: {m} (allowed {tol:?})"))?;
     }
     Ok(())
 }
@@ -193,11 +304,12 @@ fn run_case(dir: &Path) -> std::result::Result<(), Failed> {
 fn main() {
     let args = Arguments::from_args();
     let mut cases = Vec::new();
-    for root in roots() {
+    for (root, prefix) in roots() {
         let mut found = Vec::new();
         collect_cases(&root, &mut found);
         cases.extend(found.into_iter().map(|p| {
-            let name = p
+            let name = prefix.to_string()
+                + &p
                 .strip_prefix(&root)
                 .unwrap_or(&p)
                 .components()

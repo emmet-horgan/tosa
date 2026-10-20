@@ -1,0 +1,16 @@
+{
+ "tosa_file": "tflite_conv2d_f32.tosa",
+ "ifm_name": [
+  "TosaInput_0"
+ ],
+ "ifm_file": [
+  "TosaInput_0.npy"
+ ],
+ "ofm_name": [
+  "TosaOutput_0"
+ ],
+ "ofm_file": [
+  "ref-TosaOutput_0.npy"
+ ],
+ "expected_failure": false
+}

@@ -1,0 +1,16 @@
+{
+ "tosa_file": "mobilenet_like.tosa",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input.npy"
+ ],
+ "ofm_name": [
+  "result-0"
+ ],
+ "ofm_file": [
+  "ref-result-0.npy"
+ ],
+ "expected_failure": false
+}

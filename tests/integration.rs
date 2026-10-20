@@ -1,343 +1,190 @@
+//! Tests of the public API: running graphs through the convenience functions
+//! and the interpreter hooks (statistics, FLOP counting, tracing).
+//!
+//! Operator results are covered by the conformance suite (`conformance.rs`);
+//! these tests reuse its multi-operator cases in `tests/networks`.
+
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
+use tosa_interp::stats::OpInfo;
 use tosa_interp::{
-    run_graph, run_graph_with_hooks, run_graph_with_stats, FlopCounter, HookSet, StatsCollector,
-    Tensor, TensorData,
+    FlopCounter, Graph, HookSet, InterpreterHook, OpTrace, StatsCollector, Tensor, npy, run_graph,
+    run_graph_with_hooks, run_graph_with_stats,
 };
 
-fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
+fn case_dir(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/networks").join(name)
 }
 
-fn load_tosa(fixture_name: &str) -> Vec<u8> {
-    let path = fixtures_dir().join(fixture_name).join("graph.tosa");
-    std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+#[derive(serde::Deserialize)]
+struct Desc {
+    tosa_file: String,
+    ifm_name: Vec<String>,
+    ifm_file: Vec<String>,
+    ofm_name: Vec<String>,
+    ofm_file: Vec<String>,
 }
 
-fn load_npy_f32(fixture_name: &str, filename: &str) -> Vec<f32> {
-    let path = fixtures_dir().join(fixture_name).join(filename);
-    let reader = npyz::NpyFile::new(
-        std::fs::File::open(&path)
-            .unwrap_or_else(|e| panic!("failed to open {}: {e}", path.display())),
-    )
-    .unwrap();
-    reader.into_vec::<f32>().unwrap()
+/// A network test case: its graph, inputs and reference outputs.
+struct Case {
+    graph: Vec<u8>,
+    inputs: HashMap<String, Tensor>,
+    expected: HashMap<String, Tensor>,
 }
 
-fn load_npy_i32(fixture_name: &str, filename: &str) -> Vec<i32> {
-    let path = fixtures_dir().join(fixture_name).join(filename);
-    let reader = npyz::NpyFile::new(
-        std::fs::File::open(&path)
-            .unwrap_or_else(|e| panic!("failed to open {}: {e}", path.display())),
-    )
-    .unwrap();
-    reader.into_vec::<i32>().unwrap()
-}
-
-fn assert_f32_close(actual: &[f32], expected: &[f32], tol: f32) {
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "length mismatch: got {} expected {}",
-        actual.len(),
-        expected.len()
-    );
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        assert!(
-            (a - e).abs() <= tol,
-            "element {i}: got {a} expected {e} (diff {})",
-            (a - e).abs()
-        );
+fn load_case(name: &str) -> Case {
+    let dir = case_dir(name);
+    let desc: Desc = serde_json::from_str(&std::fs::read_to_string(dir.join("desc.json")).unwrap()).unwrap();
+    let graph = std::fs::read(dir.join(&desc.tosa_file)).unwrap();
+    let parsed = Graph::from_flatbuffer(&graph).unwrap();
+    let block = parsed.main_block().unwrap();
+    let dtype = |name: &str| block.tensors.iter().find(|t| t.name == name).unwrap().dtype;
+    let load = |names: &[String], files: &[String]| -> HashMap<String, Tensor> {
+        names
+            .iter()
+            .zip(files)
+            .map(|(name, file)| {
+                let arr = npy::read(&dir.join(file)).unwrap();
+                let data = arr.to_tensor_data(dtype(name)).unwrap();
+                (name.clone(), Tensor::new(name.clone(), arr.shape, data))
+            })
+            .collect()
+    };
+    Case {
+        inputs: load(&desc.ifm_name, &desc.ifm_file),
+        expected: load(&desc.ofm_name, &desc.ofm_file),
+        graph,
     }
 }
 
-fn assert_i32_exact(actual: &[i32], expected: &[i32]) {
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "length mismatch: got {} expected {}",
-        actual.len(),
-        expected.len()
-    );
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(a, e, "element {i}: got {a} expected {e}");
+/// Number of operators in the graph's main block.
+fn operator_count(graph: &[u8]) -> usize {
+    Graph::from_flatbuffer(graph).unwrap().main_block().unwrap().operators.len()
+}
+
+#[test]
+fn run_graph_matches_reference() {
+    let case = load_case("tf_add_f32");
+    let outputs = run_graph(&case.graph, case.inputs).unwrap();
+    assert_eq!(outputs.len(), case.expected.len());
+    for (name, expected) in &case.expected {
+        let actual = &outputs[name];
+        assert_eq!(actual.shape, expected.shape, "{name}");
+        let bits = |t: &Tensor| t.data.as_f32_slice().unwrap().iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(actual), bits(expected), "{name}");
     }
 }
 
 #[test]
-fn test_const_add_f32() {
-    let data = load_tosa("const_add_f32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
+fn run_graph_rejects_missing_input() {
+    let case = load_case("tf_add_f32");
+    let mut inputs = case.inputs;
+    let removed = inputs.keys().next().unwrap().clone();
+    inputs.remove(&removed);
+    assert!(run_graph(&case.graph, inputs).is_err());
+}
 
+#[test]
+fn run_graph_rejects_invalid_flatbuffer() {
+    assert!(run_graph(b"not a tosa flatbuffer", HashMap::new()).is_err());
+    assert!(run_graph(&[], HashMap::new()).is_err());
+}
+
+#[test]
+fn stats_collector_counts_every_operator() {
+    let case = load_case("mobilenet_like");
+    let ops = operator_count(&case.graph);
+    let (outputs, stats) = run_graph_with_stats(&case.graph, case.inputs).unwrap();
     assert_eq!(outputs.len(), 1);
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("const_add_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_input_add_f32() {
-    let data = load_tosa("input_add_f32");
-
-    let a_data = load_npy_f32("input_add_f32", "input_TosaInput_0.npy");
-    let b_data = load_npy_f32("input_add_f32", "input_TosaInput_1.npy");
-
-    let mut inputs = HashMap::new();
-    inputs.insert(
-        "TosaInput_0".to_string(),
-        Tensor::new(
-            "TosaInput_0".to_string(),
-            vec![2, 3],
-            TensorData::F32(a_data),
-        ),
-    );
-    inputs.insert(
-        "TosaInput_1".to_string(),
-        Tensor::new(
-            "TosaInput_1".to_string(),
-            vec![2, 3],
-            TensorData::F32(b_data),
-        ),
-    );
-
-    let outputs = run_graph(&data, inputs).unwrap();
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("input_add_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_sub_i32() {
-    let data = load_tosa("sub_i32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_i32_slice().unwrap();
-    let expected = load_npy_i32("sub_i32", "expected_TosaOutput_0.npy");
-    assert_i32_exact(actual, &expected);
-}
-
-#[test]
-fn test_abs_negate_f32() {
-    let data = load_tosa("abs_negate_f32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("abs_negate_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_reshape_f32() {
-    let data = load_tosa("reshape_f32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-
-    let (_, tensor) = outputs.iter().next().unwrap();
-    assert_eq!(tensor.shape, vec![3, 2]);
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("reshape_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_broadcast_add_f32() {
-    let data = load_tosa("broadcast_add_f32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-
-    let (_, tensor) = outputs.iter().next().unwrap();
-    assert_eq!(tensor.shape, vec![2, 3]);
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("broadcast_add_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_mul_f32() {
-    let data = load_tosa("mul_f32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32("mul_f32", "expected_TosaOutput_0.npy");
-    assert_f32_close(actual, &expected, 1e-6);
-}
-
-#[test]
-fn test_stats_collector() {
-    let data = load_tosa("const_add_f32");
-    let (outputs, stats) = run_graph_with_stats(&data, HashMap::new()).unwrap();
-
-    assert!(!outputs.is_empty());
-    assert!(stats.total_ops_executed >= 3); // 2 CONST + 1 ADD
+    assert_eq!(stats.total_ops_executed as usize, ops);
+    assert_eq!(stats.op_stats.values().map(|s| s.count).sum::<u64>() as usize, ops);
+    assert!(stats.op_stats.contains_key("CONV2D"));
     assert!(stats.peak_memory_bytes > 0);
-    assert!(stats.op_stats.contains_key("CONST"));
-    assert!(stats.op_stats.contains_key("ADD"));
+    assert!(stats.summary().contains("CONV2D"));
 }
 
-/// Test with the pre-existing example .tosa file in the repo.
-/// This test verifies the interpreter can load and execute a real .tosa file
-/// from the reference model examples directory.
 #[test]
-fn test_existing_example_add() {
-    let tosa_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("reference_model/examples/test_add_1x4x4x4_f32/flatbuffer-tf/test_add_1x4x4x4_f32.tosa");
+fn op_trace_records_every_operator_once() {
+    let case = load_case("conv_matmul");
+    let graph = Graph::from_flatbuffer(&case.graph).unwrap();
+    let operators = &graph.main_block().unwrap().operators;
+    let mut trace = OpTrace::new();
+    run_graph_with_hooks(&case.graph, case.inputs, &mut trace).unwrap();
 
-    if !tosa_path.exists() {
-        eprintln!("Skipping test_existing_example_add: file not found");
-        return;
+    // Operators run in dataflow order; `op_index` is the position in the graph.
+    let mut seen: Vec<usize> = trace.entries.iter().map(|e| e.op_index).collect();
+    seen.sort_unstable();
+    assert_eq!(seen, (0..operators.len()).collect::<Vec<_>>());
+    for e in &trace.entries {
+        assert_eq!(e.op, operators[e.op_index].op.name());
+        assert_eq!(e.output_shapes.len(), operators[e.op_index].outputs.len(), "{}", e.op);
     }
+}
 
-    let data = std::fs::read(&tosa_path).unwrap();
+#[test]
+fn flop_counter_matches_operator_shapes() {
+    let case = load_case("conv_matmul");
+    let mut trace = OpTrace::new();
+    run_graph_with_hooks(&case.graph, case.inputs.clone(), &mut trace).unwrap();
+    let mut flops = FlopCounter::new();
+    run_graph_with_hooks(&case.graph, case.inputs, &mut flops).unwrap();
 
-    // Load the numpy inputs
-    let examples_dir = tosa_path.parent().unwrap().parent().unwrap();
-    let p0_path = examples_dir.join("placeholder_0.npy");
-    let p1_path = examples_dir.join("placeholder_1.npy");
-
-    if !p0_path.exists() || !p1_path.exists() {
-        eprintln!("Skipping: input npy files not found");
-        return;
+    // MATMUL [N, H, C] x [N, C, W]: 2*N*H*W*C; CONV2D: 2*N*OH*OW*OC*KH*KW*IC.
+    let expected = |op: &str| -> u64 {
+        trace
+            .entries
+            .iter()
+            .filter(|e| e.op == op)
+            .map(|e| {
+                let p = |v: &[usize]| v.iter().map(|&d| d as u64).product::<u64>();
+                let (i, w, o) = (&e.input_shapes[0], &e.input_shapes[1], &e.output_shapes[0]);
+                match op {
+                    "MATMUL" => 2 * p(&i[..3]) * w[2] as u64,
+                    _ => 2 * p(o) * p(&w[1..]),
+                }
+            })
+            .sum()
+    };
+    for op in ["MATMUL", "CONV2D"] {
+        assert!(expected(op) > 0, "{op} missing from the graph");
+        assert_eq!(flops.flops_by_op[op], expected(op), "{op}");
     }
-
-    let p0_file = npyz::NpyFile::new(std::fs::File::open(&p0_path).unwrap()).unwrap();
-    let p0_shape: Vec<usize> = p0_file.shape().iter().map(|&d| d as usize).collect();
-    let p0: Vec<f32> = p0_file.into_vec().unwrap();
-
-    let p1_file = npyz::NpyFile::new(std::fs::File::open(&p1_path).unwrap()).unwrap();
-    let p1_shape: Vec<usize> = p1_file.shape().iter().map(|&d| d as usize).collect();
-    let p1: Vec<f32> = p1_file.into_vec().unwrap();
-
-    let mut inputs = HashMap::new();
-    inputs.insert(
-        "TosaInput_0".to_string(),
-        Tensor::new("TosaInput_0".to_string(), p0_shape, TensorData::F32(p0.clone())),
-    );
-    inputs.insert(
-        "TosaInput_1".to_string(),
-        Tensor::new("TosaInput_1".to_string(), p1_shape, TensorData::F32(p1.clone())),
-    );
-
-    let result = run_graph(&data, inputs);
-    // Just verify the graph loads and runs without error.
-    // The .npy files in this example don't match the graph's declared shape,
-    // so we only check that execution completed.
-    assert!(result.is_ok(), "graph execution failed: {:?}", result.err());
-    assert!(!result.unwrap().is_empty());
+    assert_eq!(flops.total_flops, flops.flops_by_op.values().sum::<u64>());
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2 tests — ops generated by gen_fixtures_phase2.py
-// ---------------------------------------------------------------------------
-
-fn run_const_graph_f32(fixture: &str, expected_file: &str, tol: f32) {
-    let data = load_tosa(fixture);
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-    assert!(!outputs.is_empty(), "{fixture}: no outputs");
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_f32_slice().unwrap();
-    let expected = load_npy_f32(fixture, expected_file);
-    assert_f32_close(actual, &expected, tol);
+/// Counts hook calls into counters shared with the test.
+struct CallCounter {
+    pre: Rc<Cell<usize>>,
+    post: Rc<Cell<usize>>,
 }
 
-fn run_const_graph_i32(fixture: &str, expected_file: &str) {
-    let data = load_tosa(fixture);
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-    assert!(!outputs.is_empty(), "{fixture}: no outputs");
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_i32_slice().unwrap();
-    let expected = load_npy_i32(fixture, expected_file);
-    assert_i32_exact(actual, &expected);
+impl InterpreterHook for CallCounter {
+    fn pre_op(&mut self, _op: &OpInfo, _inputs: &[&Tensor]) {
+        self.pre.set(self.pre.get() + 1);
+    }
+    fn post_op(&mut self, _op: &OpInfo, _inputs: &[&Tensor], _outputs: &[&Tensor]) {
+        self.post.set(self.post.get() + 1);
+    }
 }
 
 #[test]
-fn test_maximum_f32() {
-    run_const_graph_f32("maximum_f32", "expected_result-0.npy", 1e-6);
-}
-
-#[test]
-fn test_matmul_f32() {
-    run_const_graph_f32("matmul_f32", "expected_result-0.npy", 1e-5);
-}
-
-#[test]
-fn test_conv2d_f32() {
-    run_const_graph_f32("conv2d_f32", "expected_result-0.npy", 1e-5);
-}
-
-#[test]
-fn test_transpose_f32() {
-    run_const_graph_f32("transpose_f32", "expected_result-0.npy", 1e-6);
-}
-
-#[test]
-fn test_reduce_sum_f32() {
-    run_const_graph_f32("reduce_sum_f32", "expected_result-0.npy", 1e-5);
-}
-
-#[test]
-fn test_sigmoid_f32() {
-    run_const_graph_f32("sigmoid_f32", "expected_result-0.npy", 1e-5);
-}
-
-#[test]
-fn test_concat_f32() {
-    run_const_graph_f32("concat_f32", "expected_result-0.npy", 1e-6);
-}
-
-#[test]
-fn test_cast_f32_to_i32() {
-    run_const_graph_i32("cast_f32_to_i32", "expected_result-0.npy");
-}
-
-#[test]
-fn test_equal_i32() {
-    let data = load_tosa("equal_i32");
-    let outputs = run_graph(&data, HashMap::new()).unwrap();
-    assert!(!outputs.is_empty());
-    let (_, tensor) = outputs.iter().next().unwrap();
-    let actual = tensor.data.as_bool_slice().unwrap();
-    // Expected: [true, false, true, false]
-    assert_eq!(actual, &[true, false, true, false]);
-}
-
-// ---------------------------------------------------------------------------
-// HookSet / multi-collector test
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_hookset_multiple_collectors() {
-    let data = load_tosa("matmul_f32");
-
+fn hookset_dispatches_to_every_hook() {
+    let case = load_case("mobilenet_like");
+    let ops = operator_count(&case.graph);
+    let counters: Vec<_> = (0..2).map(|_| (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)))).collect();
     let mut hooks = HookSet::new();
+    for (pre, post) in &counters {
+        hooks.add(CallCounter { pre: pre.clone(), post: post.clone() });
+    }
     hooks.add(StatsCollector::new());
-    hooks.add(FlopCounter::new());
+    assert_eq!(hooks.hooks().len(), 3);
 
-    let outputs = run_graph_with_hooks(&data, HashMap::new(), &mut hooks).unwrap();
-    assert!(!outputs.is_empty());
-
-    // We can't downcast easily through Box<dyn>, so just verify it ran without panic.
-    // The HookSet dispatched to both collectors successfully.
-}
-
-#[test]
-fn test_flop_counter() {
-    let data = load_tosa("matmul_f32");
-    let mut hook = FlopCounter::new();
-    let outputs = run_graph_with_hooks(&data, HashMap::new(), &mut hook).unwrap();
-    assert!(!outputs.is_empty());
-    assert!(hook.total_flops > 0, "MATMUL should report FLOPs");
-    assert!(
-        hook.flops_by_op.contains_key("MATMUL"),
-        "MATMUL should appear in flops_by_op"
-    );
-    // [1,2,3] x [1,3,2] = 2*1*2*2*3 = 24 flops
-    assert_eq!(hook.flops_by_op["MATMUL"], 24);
+    let outputs = run_graph_with_hooks(&case.graph, case.inputs, &mut hooks).unwrap();
+    assert_eq!(outputs.len(), 1);
+    for (pre, post) in &counters {
+        assert_eq!((pre.get(), post.get()), (ops, ops));
+    }
 }

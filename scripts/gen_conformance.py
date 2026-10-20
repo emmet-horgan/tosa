@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["tosa-tools==2026.8.0"]
+# ///
 """Generate conformance test cases for tosa-interp from the TOSA reference model.
 
 For each requested operator this script:
@@ -17,13 +21,14 @@ generated. The generator produces thousands of cases per operator, so by
 default a sample is kept (see ``--max-positive`` / ``--max-negative``);
 ``--full`` keeps every case, writing to the untracked ``target/conformance-full``.
 
-Run it with a Python environment that has the ``tosa-tools`` wheel installed
-(it provides the generator, the reference model executable and its data
-generation library), e.g. from the repository root:
+The ``tosa-tools`` wheel provides the generator, the reference model
+executable and its data generation library. With uv the script installs it on
+the fly (on Windows, Linux or macOS), e.g. from the repository root:
 
-    uv venv .venv && uv pip install --python .venv tosa-tools
-    .venv/bin/python scripts/gen_conformance.py --op conv2d        # Linux/macOS
-    .venv\\Scripts\\python scripts\\gen_conformance.py --op conv2d   # Windows
+    uv run scripts/gen_conformance.py --op conv2d
+
+Alternatively run it with ``python`` from any environment that has
+``tosa-tools`` installed (``pip install tosa-tools==2026.8.0``).
 
 Set ``TOSA_REF_MODEL`` / ``TOSA_GENERATE_LIB`` to override the binaries used.
 
@@ -181,7 +186,7 @@ def _write_custom_test(dest: Path, tosa: bytes, inputs: dict, outputs: list[str]
         "ofm_file": [f"ref-{n}.npy" for n in outputs],
         "expected_failure": False,
     }
-    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n")
+    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n", newline="\n")
 
 
 def _fft_cases(seed: int):
@@ -376,7 +381,7 @@ def keep_test(test: Path, ref_model: Path, dest_root: Path) -> bool:
         files += desc["ofm_file"]
     for f in files:
         shutil.copy2(test / f, dest / f)
-    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n")
+    (dest / "desc.json").write_text(json.dumps(desc, indent=1) + "\n", newline="\n")
     return True
 
 
