@@ -244,21 +244,17 @@ fn estimate_flops(op: Op, inputs: &[&Tensor], outputs: &[&Tensor]) -> u64 {
             }
         }
         // CONV2D: 2 * N * OH * OW * OC * KH * KW * IC
-        Op::Conv2d => {
-            if inputs.len() >= 2 && !outputs.is_empty() {
-                let out = &outputs[0];
-                if out.shape.len() == 4 && inputs[1].shape.len() == 4 {
-                    let n = out.shape[0] as u64;
-                    let oh = out.shape[1] as u64;
-                    let ow = out.shape[2] as u64;
-                    let oc = out.shape[3] as u64;
-                    let kh = inputs[1].shape[1] as u64;
-                    let kw = inputs[1].shape[2] as u64;
-                    let ic = inputs[1].shape[3] as u64;
-                    2 * n * oh * ow * oc * kh * kw * ic
-                } else {
-                    0
-                }
+        Op::Conv2d if inputs.len() >= 2 && !outputs.is_empty() => {
+            let out = &outputs[0];
+            if out.shape.len() == 4 && inputs[1].shape.len() == 4 {
+                let n = out.shape[0] as u64;
+                let oh = out.shape[1] as u64;
+                let ow = out.shape[2] as u64;
+                let oc = out.shape[3] as u64;
+                let kh = inputs[1].shape[1] as u64;
+                let kw = inputs[1].shape[2] as u64;
+                let ic = inputs[1].shape[3] as u64;
+                2 * n * oh * ow * oc * kh * kw * ic
             } else {
                 0
             }

@@ -110,22 +110,23 @@ impl TensorData {
             DType::Fp8E4M3 => TensorData::Fp8E4M3(bytes.iter().map(|&b| Fp8E4M3(b)).collect()),
             DType::Fp8E5M2 => TensorData::Fp8E5M2(bytes.iter().map(|&b| Fp8E5M2(b)).collect()),
             DType::I16 => {
-                let data: Vec<i16> = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+                let data: Vec<i16> = bytes.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
                 TensorData::I16(data)
             }
             DType::I32 => {
-                let data: Vec<i32> =
-                    bytes.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+                let data: Vec<i32> = bytes.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(*c)).collect();
                 TensorData::I32(data)
             }
             DType::Shape => {
                 // SHAPE dtype stores i64 values (8 bytes each)
-                let data: Vec<i64> = bytes.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect();
+                let data: Vec<i64> = bytes.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(*c)).collect();
                 TensorData::I64(data)
             }
             DType::I48 => {
                 let data: Vec<i64> = bytes
-                    .chunks_exact(6)
+                    .as_chunks::<6>()
+                    .0
+                    .iter()
                     .map(|c| {
                         let mut buf = [0u8; 8];
                         buf[..6].copy_from_slice(c);
@@ -140,26 +141,25 @@ impl TensorData {
                 TensorData::I48(data)
             }
             DType::I64 => {
-                let data: Vec<i64> = bytes.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect();
+                let data: Vec<i64> = bytes.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(*c)).collect();
                 TensorData::I64(data)
             }
             DType::F32 => {
-                let data: Vec<f32> =
-                    bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+                let data: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
                 TensorData::F32(data)
             }
             DType::F16 => {
                 let data: Vec<half::f16> =
-                    bytes.chunks_exact(2).map(|c| half::f16::from_le_bytes([c[0], c[1]])).collect();
+                    bytes.as_chunks::<2>().0.iter().map(|c| half::f16::from_le_bytes(*c)).collect();
                 TensorData::F16(data)
             }
             DType::Bf16 => {
                 let data: Vec<half::bf16> =
-                    bytes.chunks_exact(2).map(|c| half::bf16::from_le_bytes([c[0], c[1]])).collect();
+                    bytes.as_chunks::<2>().0.iter().map(|c| half::bf16::from_le_bytes(*c)).collect();
                 TensorData::Bf16(data)
             }
             DType::F64 => {
-                let data: Vec<f64> = bytes.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
+                let data: Vec<f64> = bytes.as_chunks::<8>().0.iter().map(|c| f64::from_le_bytes(*c)).collect();
                 TensorData::F64(data)
             }
             _ => return Err(Error::DTypeMismatch(format!("cannot deserialize raw bytes for {:?}", dtype))),
