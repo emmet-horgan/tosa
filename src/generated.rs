@@ -1,4 +1,7 @@
+/// FlatBuffers bindings for `schema/tosa.fbs`. The file is checked in and
+/// regenerated with `cargo xtask codegen` when the schema changes.
 #[allow(
+    unknown_lints, // mismatched_lifetime_syntaxes is newer than the MSRV
     unused_imports,
     dead_code,
     clippy::all,
@@ -9,7 +12,7 @@
     mismatched_lifetime_syntaxes
 )]
 pub mod tosa {
-    include!(concat!(env!("OUT_DIR"), "/tosa_generated.rs"));
+    include!("generated/tosa_generated.rs");
 }
 
 pub use tosa::tosa::*;

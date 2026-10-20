@@ -1,10 +1,17 @@
+[workspace]
+members = [".", "xtask"]
+# cargo build / cargo test cover the library only; xtask compiles flatc.
+default-members = ["."]
+
 [package]
 name = "tosa-interp"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 
 [dependencies]
-flatbuffers = "25.2"
+# Must match the flatc version used by cargo xtask codegen (flatc-fork).
+flatbuffers = "25.12.19"
 half = { version = "2", features = ["num-traits"] }
 libm = "0.2.16"
 thiserror = "2"
@@ -14,8 +21,6 @@ libtest-mimic = "0.8.2"
 npyz = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[build-dependencies]
 
 [[test]]
 name = "conformance"
