@@ -1,0 +1,22 @@
+{
+ "onnx_file": "model.onnx",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/onnx_testcases.py",
+  "seed": 11,
+  "description": "Conv(pads) -> BatchNormalization -> Relu -> MaxPool -> Conv(SAME_UPPER, stride 2, bias)\n    -> Relu -> GlobalAveragePool -> Flatten -> Gemm -> Softmax.",
+  "opset": 13
+ }
+}

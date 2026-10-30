@@ -1,0 +1,26 @@
+{
+ "onnx_file": "model.onnx",
+ "ifm_name": [
+  "a",
+  "b"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "out_a",
+  "out_b"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/onnx_testcases.py",
+  "seed": 11,
+  "description": "Add (broadcast), Mul, Sub, Div, Sigmoid, Tanh, Clip (inputs), LeakyRelu, Sqrt, Exp,\n    Concat, Transpose, ReduceMean, Unsqueeze, and the Shape/Gather/Concat/Reshape flatten idiom.",
+  "opset": 13
+ }
+}

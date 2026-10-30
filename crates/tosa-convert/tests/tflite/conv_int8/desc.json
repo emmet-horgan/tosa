@@ -1,0 +1,21 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "int8 per-channel quantized model with float edges, as post-training\n    quantization produces: QUANTIZE -> CONV_2D (per-channel, RELU) and\n    DEPTHWISE_CONV_2D (per-channel) -> ADD (different scales) -> MAX_POOL_2D ->\n    DEQUANTIZE."
+ }
+}

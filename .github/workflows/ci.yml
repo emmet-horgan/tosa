@@ -81,9 +81,41 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # The first run builds flatc from source (flatc-fork, via CMake); the
-      # cache makes later runs fast.
+      # A prebuilt flatc of the same release as the flatbuffers runtime crate
+      # (FLATC_VERSION in xtask/src/main.rs); nothing is compiled.
+      - name: Install flatc
+        run: |
+          curl -sSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          echo "9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039  flatc.zip" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          unzip -o -q flatc.zip -d "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/flatc"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/flatc" --version
       - name: Clippy (xtask)
         run: cargo clippy -p xtask -- -D warnings
-      - name: Check the generated flatbuffer bindings match the schema
+      - name: Check the generated flatbuffer bindings match their schemas
         run: cargo xtask codegen --check
+
+  models:
+    name: Well-known models
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # The downloads are pinned by hash in scripts/models.py; cache them.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: target/models-download
+          key: models-${{ hashFiles('scripts/models.py') }}
+      - name: Fetch models and record LiteRT outputs
+        run: uv run scripts/models.py
+      - name: Convert and run the models
+        run: cargo test --release -p tosa-convert --test models -- --nocapture
+      - name: Build the model benchmarks
+        run: cargo bench -p tosa-convert --no-run

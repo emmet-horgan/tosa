@@ -1,0 +1,21 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "Float CNN head to tail: CONV_2D(RELU6) -> DEPTHWISE_CONV_2D(RELU) ->\n    AVERAGE_POOL_2D -> RESHAPE -> FULLY_CONNECTED -> SOFTMAX."
+ }
+}

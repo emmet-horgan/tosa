@@ -1,18 +1,28 @@
-//! Development tasks for tosa-interp, run as `cargo xtask <task>`.
+//! Development tasks for the tosa workspace, run as `cargo xtask <task>`.
 //!
-//! - `codegen`: regenerate the FlatBuffers bindings in
-//!   `crates/tosa-ir/src/generated/tosa_generated.rs` from `crates/tosa-ir/schema/tosa.fbs`.
-//! - `codegen --check`: fail if the checked-in bindings are out of date.
+//! - `codegen`: regenerate the FlatBuffers bindings for every schema in
+//!   [`SCHEMAS`] with `flatc`.
+//! - `codegen --check`: fail if any checked-in bindings are out of date.
 //!
-//! `flatc` comes from the `flatc-fork` crate, which builds the FlatBuffers
-//! compiler from vendored sources (this needs CMake and a C++ compiler). The
-//! library itself never runs `flatc`: it compiles the checked-in bindings.
+//! `flatc` is not built here: the task uses the binary named by the `FLATC`
+//! environment variable, or `flatc` on `PATH`. Install it from your package
+//! manager or the prebuilt archives on
+//! <https://github.com/google/flatbuffers/releases>; its version must be
+//! [`FLATC_VERSION`], the version of the `flatbuffers` runtime crate the
+//! workspace uses, so that the generated code and the runtime agree.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const SCHEMA: &str = "crates/tosa-ir/schema/tosa.fbs";
-const GENERATED: &str = "crates/tosa-ir/src/generated/tosa_generated.rs";
+/// The flatbuffers release the generated code must come from (keep in sync
+/// with the `flatbuffers` dependency in `Cargo.toml`).
+const FLATC_VERSION: &str = "25.12.19";
+
+/// (schema, generated file) pairs, relative to the repository root.
+const SCHEMAS: &[(&str, &str)] = &[
+    ("crates/tosa-ir/schema/tosa.fbs", "crates/tosa-ir/src/generated/tosa_generated.rs"),
+    ("crates/tosa-convert/schema/tflite.fbs", "crates/tosa-convert/src/tflite/generated/tflite_generated.rs"),
+];
 
 const USAGE: &str = "usage: cargo xtask codegen [--check]";
 
@@ -36,10 +46,20 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the repository").to_path_buf()
 }
 
+/// The flatc binary to use: `$FLATC`, or `flatc` on `PATH`.
+fn flatc() -> PathBuf {
+    std::env::var_os("FLATC").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("flatc"))
+}
+
 fn run_flatc(args: &[&std::ffi::OsStr]) -> Result<String, String> {
-    let flatc = flatc_fork::flatc();
-    let output =
-        Command::new(flatc).args(args).output().map_err(|e| format!("failed to run {}: {e}", flatc.display()))?;
+    let flatc = flatc();
+    let output = Command::new(&flatc).args(args).output().map_err(|e| {
+        format!(
+            "failed to run {}: {e}\ninstall flatc {FLATC_VERSION} (package manager, or a prebuilt archive from \
+             https://github.com/google/flatbuffers/releases/tag/v{FLATC_VERSION}) and put it on PATH or in $FLATC",
+            flatc.display()
+        )
+    })?;
     if !output.status.success() {
         return Err(format!(
             "flatc failed ({}):\n{}{}",
@@ -51,35 +71,55 @@ fn run_flatc(args: &[&std::ffi::OsStr]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// The bindings flatc produces for the schema, with LF line endings and a header.
-fn generate(root: &Path) -> Result<String, String> {
+fn check_version() -> Result<String, String> {
+    let version = run_flatc(&["--version".as_ref()])?;
+    if !version.ends_with(FLATC_VERSION) {
+        return Err(format!(
+            "{version} found, but the flatbuffers runtime is {FLATC_VERSION}; use a matching flatc \
+             (https://github.com/google/flatbuffers/releases/tag/v{FLATC_VERSION})"
+        ));
+    }
+    Ok(version)
+}
+
+/// The bindings flatc produces for `schema`, with LF line endings and a header.
+fn generate(root: &Path, schema: &str, version: &str) -> Result<String, String> {
     let out_dir = std::env::temp_dir().join(format!("tosa-xtask-codegen-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-    let version = run_flatc(&["--version".as_ref()])?;
-    let result = run_flatc(&["--rust".as_ref(), "-o".as_ref(), out_dir.as_os_str(), root.join(SCHEMA).as_os_str()])
-        .and_then(|_| {
-            std::fs::read_to_string(out_dir.join("tosa_generated.rs"))
-                .map_err(|e| format!("flatc produced no tosa_generated.rs: {e}"))
+    let schema_path = root.join(schema);
+    let result =
+        run_flatc(&["--rust".as_ref(), "-o".as_ref(), out_dir.as_os_str(), schema_path.as_os_str()]).and_then(|_| {
+            let stem = schema_path.file_stem().unwrap().to_string_lossy();
+            let generated = out_dir.join(format!("{stem}_generated.rs"));
+            std::fs::read_to_string(&generated).map_err(|e| format!("flatc produced no {}: {e}", generated.display()))
         });
     let _ = std::fs::remove_dir_all(&out_dir);
     let code = result?.replace("\r\n", "\n");
-    Ok(format!("// @generated by `cargo xtask codegen` from {SCHEMA} with {version}. Do not edit.\n{code}"))
+    Ok(format!("// @generated by `cargo xtask codegen` from {schema} with {version}. Do not edit.\n{code}"))
 }
 
 fn codegen(check: bool) -> Result<(), String> {
     let root = repo_root();
-    let generated = generate(&root)?;
-    let path = root.join(GENERATED);
-    if check {
-        let current = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
-        if current != generated {
-            return Err(format!("{GENERATED} is out of date with {SCHEMA}; run `cargo xtask codegen`"));
+    let version = check_version()?;
+    let mut stale = Vec::new();
+    for (schema, generated) in SCHEMAS {
+        let code = generate(&root, schema, &version)?;
+        let path = root.join(generated);
+        if check {
+            let current = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
+            if current != code {
+                stale.push(*generated);
+            } else {
+                println!("{generated} is up to date");
+            }
+        } else {
+            std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+            std::fs::write(&path, code).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            println!("wrote {generated}");
         }
-        println!("{GENERATED} is up to date");
-    } else {
-        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-        std::fs::write(&path, generated).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        println!("wrote {GENERATED}");
+    }
+    if !stale.is_empty() {
+        return Err(format!("out of date with their schemas: {}; run `cargo xtask codegen`", stale.join(", ")));
     }
     Ok(())
 }

@@ -19,18 +19,211 @@ use tosa_ir::tensor::checked_element_count;
 use tosa_ir::{BasicBlock, DType, Graph, Op, OpAttribute, Operator, Region, TensorDef, Version};
 
 use crate::error::Result;
-use crate::layout::{compose_perms, is_identity};
+use crate::layout::{compose_perms, inverse_perms, is_identity};
 
 /// Run every cleanup pass on every block of `graph`.
 pub fn cleanup(graph: &mut Graph, max_folded_bytes: usize) -> Result<()> {
     for region in &mut graph.regions {
         for block in &mut region.blocks {
-            cancel_transposes(block);
+            loop {
+                let changed = cancel_transposes(block) + sink_transposes(block);
+                if changed == 0 {
+                    break;
+                }
+            }
             fold_constants(block, max_folded_bytes)?;
             eliminate_dead_code(block);
         }
     }
     Ok(())
+}
+
+/// Operators that act element by element, so a TRANSPOSE commutes with them
+/// (every data operand permuted the same way; rank-1 single-element operands
+/// such as MUL's shift and zero points are left alone).
+fn is_elementwise(op: &Operator) -> bool {
+    match op.op {
+        Op::Abs
+        | Op::Negate
+        | Op::Ceil
+        | Op::Floor
+        | Op::Exp
+        | Op::Log
+        | Op::Sin
+        | Op::Cos
+        | Op::Reciprocal
+        | Op::Rsqrt
+        | Op::Erf
+        | Op::Sigmoid
+        | Op::Tanh
+        | Op::Clz
+        | Op::BitwiseNot
+        | Op::LogicalNot
+        | Op::Clamp
+        | Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Maximum
+        | Op::Minimum
+        | Op::Pow
+        | Op::Intdiv
+        | Op::LogicalAnd
+        | Op::LogicalOr
+        | Op::LogicalXor
+        | Op::BitwiseAnd
+        | Op::BitwiseOr
+        | Op::BitwiseXor
+        | Op::Equal
+        | Op::Greater
+        | Op::GreaterEqual
+        | Op::Select
+        | Op::Cast
+        | Op::Table => true,
+        Op::Rescale => matches!(op.attribute, OpAttribute::Rescale { per_channel: false, .. }),
+        _ => false,
+    }
+}
+
+/// Move TRANSPOSE operators from the inputs of element-wise operators to
+/// their outputs: `E(T(x), T(y))` becomes `T(E(x, y))`. Constant operands of
+/// the same rank are transposed instead (and folded later); operands that
+/// are single elements are left as they are. Layout conversions inserted
+/// around channels-first operators then meet and cancel. Returns how many
+/// operators were rewritten.
+pub fn sink_transposes(block: &mut BasicBlock) -> usize {
+    let mut changed = 0;
+    loop {
+        let producers: HashMap<String, usize> = producers(block).into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        let defs: HashMap<String, usize> = block.tensors.iter().enumerate().map(|(i, t)| (t.name.clone(), i)).collect();
+        let constants: HashSet<String> =
+            block.operators.iter().filter(|op| op.op == Op::Const).flat_map(|op| op.outputs.iter().cloned()).collect();
+        let uses = use_counts(block);
+
+        // Find an element-wise operator with at least one TRANSPOSE operand
+        // and every data operand either transposed by the same permutation
+        // or constant.
+        let mut candidate = None;
+        'ops: for (i, op) in block.operators.iter().enumerate() {
+            if !is_elementwise(op) || op.outputs.len() != 1 {
+                continue;
+            }
+            let out_rank = defs.get(&op.outputs[0]).map(|&d| block.tensors[d].shape.len());
+            let Some(out_rank) = out_rank else { continue };
+            let mut perms: Option<Vec<i32>> = None;
+            for input in &op.inputs {
+                let rank = defs.get(input).map(|&d| block.tensors[d].shape.len());
+                if rank != Some(out_rank) {
+                    // A single-element operand (shift, zero point): untouched.
+                    if rank == Some(1) && defs.get(input).map(|&d| block.tensors[d].shape == [1]).unwrap_or(false) {
+                        continue;
+                    }
+                    continue 'ops;
+                }
+                if constants.contains(input) {
+                    continue;
+                }
+                let Some(&p) = producers.get(input) else { continue 'ops };
+                let t = &block.operators[p];
+                let OpAttribute::Transpose { perms: tp } = &t.attribute else { continue 'ops };
+                if t.op != Op::Transpose || uses.get(input.as_str()).copied().unwrap_or(0) != 1 {
+                    continue 'ops;
+                }
+                match &perms {
+                    None => perms = Some(tp.clone()),
+                    Some(existing) if existing == tp => {}
+                    Some(_) => continue 'ops,
+                }
+            }
+            if let Some(p) = perms {
+                candidate = Some((i, p));
+                break;
+            }
+        }
+        let Some((i, perms)) = candidate else { break };
+        changed += 1;
+        let inverse = inverse_perms(&perms);
+
+        // Rewrite: operands become the transposes' sources (constants get an
+        // explicit transpose), the operator's output takes the untransposed
+        // shape under a new name, and a transpose restores the old output.
+        let out_name = block.operators[i].outputs[0].clone();
+        let out_def = defs[&out_name];
+        let out_dtype = block.tensors[out_def].dtype;
+        let old_shape = block.tensors[out_def].shape.clone();
+        let new_shape: Vec<i32> = inverse.iter().map(|&p| old_shape[p as usize]).collect();
+        let inner_name = unique_name(block, &format!("{out_name}_pre"));
+        let mut new_ops: Vec<Operator> = Vec::new();
+        let inputs = block.operators[i].inputs.clone();
+        let mut new_inputs = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let rank = block.tensors[defs[&input]].shape.len();
+            if rank != old_shape.len() {
+                new_inputs.push(input);
+            } else if constants.contains(&input) {
+                let c_shape = block.tensors[defs[&input]].shape.clone();
+                let t_shape: Vec<i32> = inverse.iter().map(|&p| c_shape[p as usize]).collect();
+                let t_name = unique_name(block, &format!("{input}_t"));
+                block.tensors.push(TensorDef {
+                    name: t_name.clone(),
+                    shape: t_shape,
+                    dtype: block.tensors[defs[&input]].dtype,
+                    data: None,
+                    is_variable: false,
+                    is_unranked: false,
+                    variable_name: None,
+                });
+                new_ops.push(Operator::new(
+                    Op::Transpose,
+                    vec![input],
+                    vec![t_name.clone()],
+                    OpAttribute::Transpose { perms: inverse.clone() },
+                ));
+                new_inputs.push(t_name);
+            } else {
+                let p = producers[&input];
+                new_inputs.push(block.operators[p].inputs[0].clone());
+            }
+        }
+        block.tensors.push(TensorDef {
+            name: inner_name.clone(),
+            shape: new_shape,
+            dtype: out_dtype,
+            data: None,
+            is_variable: false,
+            is_unranked: false,
+            variable_name: None,
+        });
+        let location = block.operators[i].location.clone();
+        block.operators[i].inputs = new_inputs;
+        block.operators[i].outputs = vec![inner_name.clone()];
+        let mut restore = Operator::new(
+            Op::Transpose,
+            vec![inner_name],
+            vec![out_name],
+            OpAttribute::Transpose { perms: perms.clone() },
+        );
+        restore.location = location.clone();
+        for op in &mut new_ops {
+            op.location = location.clone();
+        }
+        // Constant transposes go before the operator, the restoring transpose after it.
+        let n = new_ops.len();
+        for (k, op) in new_ops.into_iter().enumerate() {
+            block.operators.insert(i + k, op);
+        }
+        block.operators.insert(i + n + 1, restore);
+        eliminate_dead_code(block);
+    }
+    changed
+}
+
+/// A tensor name not yet used in `block`.
+fn unique_name(block: &BasicBlock, hint: &str) -> String {
+    let taken: HashSet<&str> = block.tensors.iter().map(|t| t.name.as_str()).collect();
+    if !taken.contains(hint) {
+        return hint.to_string();
+    }
+    (1..).map(|n| format!("{hint}_{n}")).find(|c| !taken.contains(c.as_str())).unwrap()
 }
 
 /// Operator index producing each tensor.

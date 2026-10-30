@@ -22,18 +22,28 @@ pub mod error;
 pub mod frontend;
 pub mod layout;
 pub mod lower;
+#[cfg(feature = "onnx")]
+pub mod onnx;
 pub mod passes;
 pub mod quant;
 pub mod source;
+#[cfg(feature = "tflite")]
+pub mod tflite;
 
 pub use error::{ConvertError, Result};
 pub use frontend::{Frontend, FrontendSet};
 pub use lower::{
-    Conversion, ConvertOptions, LowerCtx, LowerFn, LoweringRegistry, Report, analyze, convert, lower_graph,
+    Conversion, ConvertOptions, IoHook, LowerCtx, LowerFn, LoweringRegistry, Report, analyze, convert, lower_graph,
 };
 pub use source::{AttrValue, Attrs, Quantization, SourceDType, SourceGraph, SourceNode, SourceTensor, TensorId};
 
 /// The frontends built into this crate (selected by Cargo features).
 pub fn default_frontends() -> FrontendSet {
-    FrontendSet::new()
+    #[allow(unused_mut)]
+    let mut set = FrontendSet::new();
+    #[cfg(feature = "tflite")]
+    set.register(tflite::TfliteFrontend::new());
+    #[cfg(feature = "onnx")]
+    set.register(onnx::OnnxFrontend::new());
+    set
 }

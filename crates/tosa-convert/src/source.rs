@@ -101,11 +101,23 @@ pub struct SourceTensor {
     pub quant: Option<Quantization>,
     /// Constant data (weights, biases, shape operands).
     pub constant: Option<TensorData>,
+    /// The type the source model declares when the frontend has re-expressed
+    /// the tensor in another type (TFLite's uint8 tensors become int8 with
+    /// shifted zero points, for example). Lowerings of graph inputs and
+    /// outputs use it to restore the external representation.
+    pub original_dtype: Option<SourceDType>,
 }
 
 impl SourceTensor {
     pub fn new(name: &str, dtype: SourceDType, shape: &[i64]) -> Self {
-        SourceTensor { name: name.to_string(), dtype, shape: shape.to_vec(), quant: None, constant: None }
+        SourceTensor {
+            name: name.to_string(),
+            dtype,
+            shape: shape.to_vec(),
+            quant: None,
+            constant: None,
+            original_dtype: None,
+        }
     }
 
     pub fn with_constant(mut self, data: TensorData) -> Self {
@@ -246,6 +258,8 @@ pub struct SourceGraph {
     pub nodes: Vec<SourceNode>,
     pub inputs: Vec<TensorId>,
     pub outputs: Vec<TensorId>,
+    /// Model-level facts a frontend's lowerings need (e.g. an opset version).
+    pub metadata: Attrs,
 }
 
 impl SourceGraph {

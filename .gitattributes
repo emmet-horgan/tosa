@@ -5,6 +5,8 @@
 # Test data and graphs.
 *.npy binary
 *.tosa binary
+*.tflite binary
 
 # Checked-in flatc output; regenerate with `cargo xtask codegen`.
 crates/tosa-ir/src/generated/*.rs linguist-generated=true
+crates/tosa-convert/src/tflite/generated/*.rs linguist-generated=true

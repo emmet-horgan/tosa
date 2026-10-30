@@ -272,6 +272,9 @@ def negative_kind(test_name: str) -> tuple[str, str]:
 
 SITE_PACKAGES = Path(sysconfig.get_path("purelib"))
 SCRIPTS_DIR = Path(sysconfig.get_path("scripts"))
+# With `uv run --with`, extra packages land in an overlay environment that is
+# on sys.path but is not the interpreter's own site-packages.
+ALL_SITE_PACKAGES = [SITE_PACKAGES] + [Path(p) for p in sys.path if p.endswith("site-packages") and Path(p) != SITE_PACKAGES]
 
 
 def tool(name: str) -> Path:
@@ -292,18 +295,14 @@ def find_file(env_var: str, candidates: list[Path], what: str) -> Path:
 
 
 def find_ref_model() -> Path:
-    bin_dir = SITE_PACKAGES / "bin"
-    return find_file(
-        "TOSA_REF_MODEL",
-        [bin_dir / "tosa_reference_model.exe", bin_dir / "tosa_reference_model"],
-        "tosa_reference_model executable",
-    )
+    candidates = [sp / "bin" / name for sp in ALL_SITE_PACKAGES for name in ("tosa_reference_model.exe", "tosa_reference_model")]
+    return find_file("TOSA_REF_MODEL", candidates, "tosa_reference_model executable")
 
 
 def find_generate_lib() -> Path:
-    lib_dir = SITE_PACKAGES / "tosa_reference_model"
     names = ["tosa_reference_generate_lib.dll", "libtosa_reference_generate_lib.so", "libtosa_reference_generate_lib.dylib"]
-    return find_file("TOSA_GENERATE_LIB", [lib_dir / n for n in names], "tosa_reference_generate_lib library")
+    candidates = [sp / "tosa_reference_model" / n for sp in ALL_SITE_PACKAGES for n in names]
+    return find_file("TOSA_GENERATE_LIB", candidates, "tosa_reference_generate_lib library")
 
 
 def run_ref_model(ref_model: Path, test_dir: Path) -> int:

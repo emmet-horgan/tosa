@@ -34,6 +34,10 @@ Per-operator results and coverage are tracked in
 | Networks | `crates/tosa-interp/tests/conformance.rs` over `crates/tosa-interp/tests/networks/<case>/` | Multi-operator graphs against the reference model, run by the same harness and named `networks::<case>`. |
 | IR round trips | `crates/tosa-ir/tests/roundtrip.rs` | Every checked-in `.tosa` file survives parse -> serialize -> parse unchanged, so the serializer is exercised on every operator and attribute the reference model emits. |
 | Conversion framework | `crates/tosa-convert/tests/framework.rs` | A toy frontend lowered through the framework and executed by the interpreter: lowering, locations, unsupported-operator reports, output naming, the cleanup passes and RESCALE emission. |
+| TFLite cases | `crates/tosa-convert/tests/tflite_cases.rs` over `tests/tflite/<case>/` | Small float, int8 and uint8 TFLite models (built by `scripts/tflite_testcases.py` from flatc JSON, outputs recorded with LiteRT's reference kernels), converted, run and compared: bit-exact for quantized outputs, within 1e-6 for float. |
+| ONNX cases | `crates/tosa-convert/tests/onnx_cases.rs` over `tests/onnx/<case>/` | Small ONNX models (built by `scripts/onnx_testcases.py`, outputs recorded with onnxruntime): convolutions with BatchNormalization, pooling, Gemm, element-wise operators and shape arithmetic; results within float32 rounding of onnxruntime. |
+| Runtime matrix | `scripts/runtime_matrix.py` | Native runtime vs `tosa-interp` vs the TOSA reference model on every well-known model over several seeds: worst-case errors and min/median timings, written to `target/runtime-matrix/results.md`. See [CONVERSION.md](CONVERSION.md). |
+| Well-known models | `crates/tosa-convert/tests/models.rs` over `target/models/<model>/` | TFLite MobileNet v1/v2 and EfficientNet-Lite0 (float and quantized) and ONNX MobileNetV2, SqueezeNet 1.1 and ResNet-18, fetched by `scripts/models.py`; skipped when absent. Same comparison rules per frontend. `cargo bench -p tosa-convert` benchmarks their conversion and execution. See [CONVERSION.md](CONVERSION.md). |
 
 Run a single suite, or filter by name:
 
@@ -214,7 +218,8 @@ request:
 | Format and lint | Ubuntu | `cargo fmt --check`, `cargo clippy --all-targets -D warnings` |
 | Test | Ubuntu, Windows, macOS | `cargo test --all-targets` across the workspace (debug, so integer overflow checks are on) and `cargo test --doc` |
 | Minimum supported Rust version | Ubuntu | `cargo check --all-targets` with Rust 1.88 (`rust-version` in `Cargo.toml`) |
-| Generated code is up to date | Ubuntu | `cargo xtask codegen --check`, clippy on the xtask |
+| Generated code is up to date | Ubuntu | Installs the prebuilt `flatc` release matching the `flatbuffers` crate (checksum verified), then `cargo xtask codegen --check` and clippy on the xtask |
+| Well-known models | Ubuntu | `uv run scripts/models.py` (downloads cached by hash), `cargo test --release -p tosa-convert --test models`, builds the model benchmarks |
 
 `.github/workflows/reference.yml` runs weekly and on demand
 (`workflow_dispatch`, with an optional list of operators). On each of Ubuntu,
@@ -229,6 +234,12 @@ Windows and macOS it installs the reference model with uv and:
    each platform's C library rather than only the one the checked-in cases
    were generated on. On failure the generated cases are uploaded as an
    artifact.
+4. On Linux and macOS, converts the well-known TFLite and ONNX models with
+   the `tosa` CLI and runs the converted graphs through the reference model
+   (`scripts/models.py --verify`), so the emitted TOSA is checked by the
+   specification's own implementation.
+5. On Linux, runs the cross-runtime matrix (`scripts/runtime_matrix.py`)
+   and uploads `results.md` and `results.json` as an artifact.
 
 Dependabot keeps the GitHub Actions (pinned to commit SHAs) and Cargo
 dependencies current, except `flatbuffers` and `flatc-fork`, which must be
@@ -245,7 +256,7 @@ cargo xtask codegen          # regenerate
 cargo xtask codegen --check  # verify; what CI runs
 ```
 
-The xtask builds `flatc` from source with the
-[flatc-fork](https://crates.io/crates/flatc-fork) crate, which needs CMake and
-a C++ compiler. The `flatbuffers` runtime in `Cargo.toml` must be the same
-version as that `flatc`.
+The xtask runs an installed `flatc` (`$FLATC` or `flatc` on `PATH`) and
+refuses versions other than the `flatbuffers` runtime's (25.12.19); use the
+package manager or the prebuilt release archive, as CI does. It regenerates
+the TOSA bindings and the TFLite bindings in `crates/tosa-convert`.

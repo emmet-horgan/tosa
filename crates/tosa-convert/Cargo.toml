@@ -6,7 +6,25 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+default = ["tflite", "onnx"]
+# The TFLite frontend (flatbuffer models from TensorFlow Lite / LiteRT).
+tflite = ["dep:flatbuffers"]
+# The ONNX frontend (protobuf models; no protobuf toolchain needed).
+onnx = []
+
 [dependencies]
 tosa-ir.workspace = true
 tosa-interp.workspace = true
 thiserror.workspace = true
+flatbuffers = { workspace = true, optional = true }
+half.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[[bench]]
+name = "models"
+harness = false

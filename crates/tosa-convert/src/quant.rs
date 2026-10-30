@@ -78,20 +78,49 @@ pub struct RescaleSpec {
     pub input_zp: i64,
     pub output_zp: i64,
     pub rounding: RoundingMode,
+    /// Treat the (INT8 or INT16) input's bits as unsigned; `input_zp` is then
+    /// in the unsigned range.
+    pub input_unsigned: bool,
+    /// Produce unsigned bits in the (INT8 or INT16) output; `output_zp` is
+    /// then in the unsigned range.
+    pub output_unsigned: bool,
 }
 
 impl RescaleSpec {
     pub fn per_tensor(scale: f64, input_zp: i64, output_zp: i64) -> Self {
-        RescaleSpec { scales: vec![scale], input_zp, output_zp, rounding: RoundingMode::Double }
+        RescaleSpec {
+            scales: vec![scale],
+            input_zp,
+            output_zp,
+            rounding: RoundingMode::Double,
+            input_unsigned: false,
+            output_unsigned: false,
+        }
+    }
+
+    pub fn per_channel(scales: Vec<f64>, input_zp: i64, output_zp: i64) -> Self {
+        RescaleSpec { scales, ..Self::per_tensor(1.0, input_zp, output_zp) }
     }
 
     pub fn rounding(mut self, rounding: RoundingMode) -> Self {
         self.rounding = rounding;
         self
     }
+
+    pub fn input_unsigned(mut self, unsigned: bool) -> Self {
+        self.input_unsigned = unsigned;
+        self
+    }
+
+    pub fn output_unsigned(mut self, unsigned: bool) -> Self {
+        self.output_unsigned = unsigned;
+        self
+    }
 }
 
-/// Single-element integer data of `dtype`.
+/// Single-element integer data of `dtype`. Values are truncated to the
+/// type's width, so an unsigned zero point such as 200 becomes the INT8 bit
+/// pattern RESCALE's `*_unsigned` flags expect.
 pub fn int_scalar(dtype: DType, value: i64) -> Result<TensorData> {
     Ok(match dtype {
         DType::I8 => TensorData::I8(vec![value as i8]),
@@ -133,8 +162,8 @@ pub fn emit_rescale(
         scale32,
         rounding_mode: spec.rounding,
         per_channel,
-        input_unsigned: false,
-        output_unsigned: false,
+        input_unsigned: spec.input_unsigned,
+        output_unsigned: spec.output_unsigned,
     };
     let shape = input.shape.clone();
     Ok(ctx.emit_temp(Op::Rescale, attr, &[input, &multiplier, &shift, &input_zp, &output_zp], out_dtype, &shape, hint))

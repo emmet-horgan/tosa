@@ -1,0 +1,21 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "uint8 per-tensor quantized CNN, as the classic TFLite MobileNets:\n    CONV_2D(RELU6) -> DEPTHWISE_CONV_2D -> AVERAGE_POOL_2D -> RESHAPE ->\n    FULLY_CONNECTED -> SOFTMAX, uint8 input and output."
+ }
+}

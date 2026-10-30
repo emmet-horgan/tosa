@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use tosa_convert::{ConvertOptions, FrontendSet, analyze};
 use tosa_interp::stats::OpInfo;
-use tosa_interp::{FlopCounter, Interpreter, InterpreterHook, OpTrace, StatsCollector, Tensor};
+use tosa_interp::{FlopCounter, Interpreter, InterpreterHook, NoopHook, OpTrace, StatsCollector, Tensor};
 use tosa_ir::{DType, Graph, npy};
 
 #[derive(Parser)]
@@ -49,9 +49,9 @@ struct RunArgs {
     /// A `.tosa` file. Alternatively pass a conformance case directory
     /// (containing `desc.json`) with `--case`.
     model: Option<PathBuf>,
-    /// A test case directory in the conformance format: the graph and inputs
-    /// are taken from its `desc.json`.
-    #[arg(long, conflicts_with = "model")]
+    /// A test case directory in the conformance format: the inputs (and,
+    /// unless a model is given, the graph) are taken from its `desc.json`.
+    #[arg(long)]
     case: Option<PathBuf>,
     /// An input tensor as `NAME=FILE.npy`; repeat for every graph input.
     #[arg(short, long = "input", value_name = "NAME=FILE")]
@@ -65,6 +65,17 @@ struct RunArgs {
     /// Print every operator as it executes.
     #[arg(long)]
     trace: bool,
+    /// Write every operator's output tensors as `.npy` files into this
+    /// directory, with an `ops.json` index (operator, location, outputs),
+    /// for comparing intermediate results with another runtime.
+    #[arg(long, value_name = "DIR")]
+    dump_dir: Option<PathBuf>,
+    /// Run the graph this many times and report the minimum and median time.
+    #[arg(long, default_value_t = 1, value_name = "N")]
+    repeat: usize,
+    /// Print a JSON summary (timings, outputs, files written) instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -139,9 +150,12 @@ fn read_input(name: &str, file: &Path, dtypes: &HashMap<String, DType>) -> Resul
 
 fn run(args: RunArgs) -> Result<()> {
     let (model, mut inputs): (PathBuf, Vec<(String, PathBuf)>) = match (&args.case, &args.model) {
-        (Some(case), _) => {
+        (Some(case), model) => {
             let desc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(case.join("desc.json"))?)?;
-            let tosa_file = desc["tosa_file"].as_str().ok_or("desc.json: missing tosa_file")?;
+            let model = match model {
+                Some(m) => m.clone(),
+                None => case.join(desc["tosa_file"].as_str().ok_or("desc.json: missing tosa_file; pass the graph")?),
+            };
             let names = desc["ifm_name"].as_array().ok_or("desc.json: missing ifm_name")?;
             let files = desc["ifm_file"].as_array().ok_or("desc.json: missing ifm_file")?;
             let inputs = names
@@ -149,7 +163,7 @@ fn run(args: RunArgs) -> Result<()> {
                 .zip(files)
                 .map(|(n, f)| (n.as_str().unwrap_or("").to_string(), case.join(f.as_str().unwrap_or(""))))
                 .collect();
-            (case.join(tosa_file), inputs)
+            (model, inputs)
         }
         (None, Some(model)) => (model.clone(), Vec::new()),
         (None, None) => return Err("pass a model file or --case DIR".into()),
@@ -171,23 +185,75 @@ fn run(args: RunArgs) -> Result<()> {
         stats: args.stats.then(StatsCollector::new),
         flops: args.stats.then(FlopCounter::new),
         trace: args.trace.then(OpTrace::new),
+        dump: match &args.dump_dir {
+            Some(dir) => {
+                std::fs::create_dir_all(dir)?;
+                Some(TensorDump { dir: dir.clone(), ops: Vec::new(), locations: operator_locations(&graph) })
+            }
+            None => None,
+        },
     };
+    // The first run collects statistics; the repeats measure time only.
+    let repeat = args.repeat.max(1);
     let start = std::time::Instant::now();
-    let outputs = interp.run(tensors, &mut hooks)?;
-    let elapsed = start.elapsed();
+    let outputs = interp.run(tensors.clone(), &mut hooks)?;
+    let mut times_ms = vec![start.elapsed().as_secs_f64() * 1e3];
+    for _ in 1..repeat {
+        let start = std::time::Instant::now();
+        interp.run(tensors.clone(), &mut NoopHook)?;
+        times_ms.push(start.elapsed().as_secs_f64() * 1e3);
+    }
+    let mut sorted = times_ms.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let (min_ms, median_ms) = (sorted[0], sorted[sorted.len() / 2]);
 
     let block = graph.main_block().ok_or("no main block")?;
+    let mut written: Vec<(String, PathBuf)> = Vec::new();
     for name in &block.outputs {
         let t = &outputs[name];
-        println!("{name}: {:?} {:?}{}", t.dtype(), t.shape, preview(t));
+        if !args.json {
+            println!("{name}: {:?} {:?}{}", t.dtype(), t.shape, preview(t));
+        }
         if let Some(dir) = &args.output_dir {
             std::fs::create_dir_all(dir)?;
-            let path = dir.join(format!("{name}.npy"));
+            let path = dir.join(format!("{}.npy", safe_file_name(name)));
             std::fs::write(&path, npy::write(&t.shape, &t.data))?;
-            println!("  wrote {}", path.display());
+            if !args.json {
+                println!("  wrote {}", path.display());
+            }
+            written.push((name.clone(), path));
         }
     }
-    println!("ran {} operators in {elapsed:.3?}", block.operators.len());
+    if args.json {
+        let outputs_json: Vec<serde_json::Value> = block
+            .outputs
+            .iter()
+            .map(|name| {
+                let t = &outputs[name];
+                let file = written.iter().find(|(n, _)| n == name).map(|(_, p)| p.display().to_string());
+                serde_json::json!({ "name": name, "dtype": format!("{:?}", t.dtype()), "shape": t.shape, "file": file })
+            })
+            .collect();
+        let summary = serde_json::json!({
+            "model": model.display().to_string(),
+            "operators": block.operators.len(),
+            "repeat": repeat,
+            "times_ms": times_ms,
+            "min_ms": min_ms,
+            "median_ms": median_ms,
+            "outputs": outputs_json,
+        });
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+    if repeat > 1 {
+        println!(
+            "ran {} operators {repeat} times: min {min_ms:.3} ms, median {median_ms:.3} ms",
+            block.operators.len()
+        );
+    } else {
+        println!("ran {} operators in {:.3} ms", block.operators.len(), times_ms[0]);
+    }
 
     if let Some(trace) = &hooks.trace {
         println!("\ntrace:");
@@ -207,6 +273,11 @@ fn run(args: RunArgs) -> Result<()> {
     if let Some(stats) = &hooks.stats {
         println!("\n{}", stats.summary());
     }
+    if let Some(dump) = &hooks.dump {
+        let index = dump.dir.join("ops.json");
+        std::fs::write(&index, serde_json::to_string_pretty(&dump.ops)?)?;
+        println!("wrote {} tensors and {}", dump.ops.iter().map(|o| o.outputs.len()).sum::<usize>(), index.display());
+    }
     if let Some(flops) = &hooks.flops {
         println!("\nestimated FLOPs: {}", flops.total_flops);
         let mut by_op: Vec<_> = flops.flops_by_op.iter().collect();
@@ -224,6 +295,7 @@ struct CliHooks {
     stats: Option<StatsCollector>,
     flops: Option<FlopCounter>,
     trace: Option<OpTrace>,
+    dump: Option<TensorDump>,
 }
 
 impl CliHooks {
@@ -237,6 +309,54 @@ impl CliHooks {
         if let Some(h) = &mut self.trace {
             f(h);
         }
+        if let Some(h) = &mut self.dump {
+            f(h);
+        }
+    }
+}
+
+/// Locations of the main block's operators, by index.
+fn operator_locations(graph: &Graph) -> Vec<Option<String>> {
+    graph.main_block().map(|b| b.operators.iter().map(|o| o.location.clone()).collect()).unwrap_or_default()
+}
+
+#[derive(serde::Serialize)]
+struct DumpedOp {
+    index: usize,
+    op: &'static str,
+    block: String,
+    location: Option<String>,
+    /// Output tensor names and the files holding them.
+    outputs: Vec<(String, String)>,
+}
+
+/// Writes every operator output of the main block as `.npy`.
+struct TensorDump {
+    dir: PathBuf,
+    ops: Vec<DumpedOp>,
+    locations: Vec<Option<String>>,
+}
+
+impl InterpreterHook for TensorDump {
+    fn post_op(&mut self, op: &OpInfo, _inputs: &[&Tensor], outputs: &[&Tensor]) {
+        if op.depth != 0 {
+            return;
+        }
+        let mut files = Vec::new();
+        for t in outputs {
+            let file = format!("{:04}_{}.npy", op.op_index, safe_file_name(&t.name));
+            if let Err(e) = std::fs::write(self.dir.join(&file), npy::write(&t.shape, &t.data)) {
+                eprintln!("cannot write {file}: {e}");
+            }
+            files.push((t.name.clone(), file));
+        }
+        self.ops.push(DumpedOp {
+            index: op.op_index,
+            op: op.op.name(),
+            block: op.block.to_string(),
+            location: self.locations.get(op.op_index).cloned().flatten(),
+            outputs: files,
+        });
     }
 }
 
@@ -253,6 +373,12 @@ impl InterpreterHook for CliHooks {
     fn on_tensor_free(&mut self, name: &str, bytes: usize) {
         self.each(|h| h.on_tensor_free(name, bytes));
     }
+}
+
+/// A tensor name as a file name: path separators and other unsafe
+/// characters become underscores.
+fn safe_file_name(name: &str) -> String {
+    name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' }).collect()
 }
 
 /// The first few elements of a tensor, for a glance at the result.

@@ -1,0 +1,561 @@
+{
+ "version": 3,
+ "operator_codes": [
+  {
+   "deprecated_builtin_code": 114,
+   "version": 1,
+   "builtin_code": "QUANTIZE"
+  },
+  {
+   "deprecated_builtin_code": 3,
+   "version": 1,
+   "builtin_code": "CONV_2D"
+  },
+  {
+   "deprecated_builtin_code": 4,
+   "version": 1,
+   "builtin_code": "DEPTHWISE_CONV_2D"
+  },
+  {
+   "deprecated_builtin_code": 0,
+   "version": 1,
+   "builtin_code": "ADD"
+  },
+  {
+   "deprecated_builtin_code": 17,
+   "version": 1,
+   "builtin_code": "MAX_POOL_2D"
+  },
+  {
+   "deprecated_builtin_code": 6,
+   "version": 1,
+   "builtin_code": "DEQUANTIZE"
+  }
+ ],
+ "subgraphs": [
+  {
+   "tensors": [
+    {
+     "shape": [
+      1,
+      6,
+      6,
+      3
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "input"
+    },
+    {
+     "shape": [
+      1,
+      6,
+      6,
+      3
+     ],
+     "type": "INT8",
+     "buffer": 0,
+     "name": "input_q",
+     "quantization": {
+      "scale": [
+       0.02
+      ],
+      "zero_point": [
+       -3
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      4,
+      3,
+      3,
+      3
+     ],
+     "type": "INT8",
+     "buffer": 1,
+     "name": "conv_w",
+     "quantization": {
+      "scale": [
+       0.031629677863628684,
+       0.0449634762475092,
+       0.03900859882201448,
+       0.012035152309539002
+      ],
+      "zero_point": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      4
+     ],
+     "type": "INT32",
+     "buffer": 2,
+     "name": "conv_b",
+     "quantization": {
+      "scale": [
+       0.0006325935572725737,
+       0.0008992695249501841,
+       0.0007801719764402897,
+       0.00024070304619078006
+      ],
+      "zero_point": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      6,
+      6,
+      4
+     ],
+     "type": "INT8",
+     "buffer": 0,
+     "name": "conv",
+     "quantization": {
+      "scale": [
+       0.04
+      ],
+      "zero_point": [
+       -128
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      3,
+      3,
+      4
+     ],
+     "type": "INT8",
+     "buffer": 3,
+     "name": "dw_w",
+     "quantization": {
+      "scale": [
+       0.030647756437662717,
+       0.03226183245862828,
+       0.03414606194682663,
+       0.008388612939250067
+      ],
+      "zero_point": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "quantized_dimension": 3
+     }
+    },
+    {
+     "shape": [
+      4
+     ],
+     "type": "INT32",
+     "buffer": 4,
+     "name": "dw_b",
+     "quantization": {
+      "scale": [
+       0.0012259102575065087,
+       0.0012904732983451312,
+       0.0013658424778730653,
+       0.00033554451757000266
+      ],
+      "zero_point": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      6,
+      6,
+      4
+     ],
+     "type": "INT8",
+     "buffer": 0,
+     "name": "dw",
+     "quantization": {
+      "scale": [
+       0.06
+      ],
+      "zero_point": [
+       7
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      6,
+      6,
+      4
+     ],
+     "type": "INT8",
+     "buffer": 0,
+     "name": "sum",
+     "quantization": {
+      "scale": [
+       0.09
+      ],
+      "zero_point": [
+       -10
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      3,
+      3,
+      4
+     ],
+     "type": "INT8",
+     "buffer": 0,
+     "name": "maxpool",
+     "quantization": {
+      "scale": [
+       0.09
+      ],
+      "zero_point": [
+       -10
+      ],
+      "quantized_dimension": 0
+     }
+    },
+    {
+     "shape": [
+      1,
+      3,
+      3,
+      4
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "output"
+    }
+   ],
+   "inputs": [
+    0
+   ],
+   "outputs": [
+    10
+   ],
+   "operators": [
+    {
+     "opcode_index": 0,
+     "inputs": [
+      0
+     ],
+     "outputs": [
+      1
+     ],
+     "builtin_options_type": "QuantizeOptions",
+     "builtin_options": {}
+    },
+    {
+     "opcode_index": 1,
+     "inputs": [
+      1,
+      2,
+      3
+     ],
+     "outputs": [
+      4
+     ],
+     "builtin_options_type": "Conv2DOptions",
+     "builtin_options": {
+      "padding": "SAME",
+      "stride_w": 1,
+      "stride_h": 1,
+      "dilation_w_factor": 1,
+      "dilation_h_factor": 1,
+      "fused_activation_function": "RELU"
+     }
+    },
+    {
+     "opcode_index": 2,
+     "inputs": [
+      4,
+      5,
+      6
+     ],
+     "outputs": [
+      7
+     ],
+     "builtin_options_type": "DepthwiseConv2DOptions",
+     "builtin_options": {
+      "padding": "SAME",
+      "stride_w": 1,
+      "stride_h": 1,
+      "depth_multiplier": 1,
+      "dilation_w_factor": 1,
+      "dilation_h_factor": 1,
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 3,
+     "inputs": [
+      4,
+      7
+     ],
+     "outputs": [
+      8
+     ],
+     "builtin_options_type": "AddOptions",
+     "builtin_options": {
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 4,
+     "inputs": [
+      8
+     ],
+     "outputs": [
+      9
+     ],
+     "builtin_options_type": "Pool2DOptions",
+     "builtin_options": {
+      "padding": "SAME",
+      "stride_w": 2,
+      "stride_h": 2,
+      "filter_width": 2,
+      "filter_height": 2,
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 5,
+     "inputs": [
+      9
+     ],
+     "outputs": [
+      10
+     ],
+     "builtin_options_type": "DequantizeOptions",
+     "builtin_options": {}
+    }
+   ],
+   "name": "main"
+  }
+ ],
+ "description": "tosa-convert test case conv_int8",
+ "buffers": [
+  {},
+  {
+   "data": [
+    143,
+    205,
+    201,
+    95,
+    105,
+    130,
+    0,
+    82,
+    162,
+    76,
+    159,
+    248,
+    81,
+    206,
+    216,
+    199,
+    56,
+    193,
+    125,
+    242,
+    250,
+    1,
+    21,
+    14,
+    2,
+    126,
+    78,
+    75,
+    51,
+    31,
+    215,
+    125,
+    247,
+    183,
+    88,
+    169,
+    91,
+    29,
+    158,
+    140,
+    242,
+    138,
+    165,
+    4,
+    120,
+    247,
+    79,
+    106,
+    82,
+    33,
+    241,
+    4,
+    196,
+    255,
+    225,
+    192,
+    126,
+    132,
+    153,
+    178,
+    120,
+    49,
+    97,
+    180,
+    56,
+    223,
+    253,
+    129,
+    30,
+    84,
+    42,
+    168,
+    9,
+    197,
+    119,
+    97,
+    176,
+    2,
+    112,
+    89,
+    53,
+    36,
+    139,
+    62,
+    249,
+    152,
+    191,
+    10,
+    58,
+    2,
+    29,
+    95,
+    47,
+    221,
+    37,
+    25,
+    156,
+    144,
+    41,
+    227,
+    25,
+    211,
+    186,
+    167,
+    226,
+    81,
+    231,
+    225
+   ]
+  },
+  {
+   "data": [
+    45,
+    1,
+    0,
+    0,
+    122,
+    7,
+    0,
+    0,
+    80,
+    254,
+    255,
+    255,
+    103,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "data": [
+    16,
+    241,
+    220,
+    190,
+    142,
+    231,
+    83,
+    153,
+    232,
+    119,
+    115,
+    183,
+    130,
+    44,
+    132,
+    205,
+    255,
+    95,
+    152,
+    41,
+    8,
+    162,
+    88,
+    88,
+    252,
+    113,
+    27,
+    103,
+    117,
+    18,
+    200,
+    166,
+    16,
+    178,
+    64,
+    109
+   ]
+  },
+  {
+   "data": [
+    8,
+    250,
+    255,
+    255,
+    57,
+    1,
+    0,
+    0,
+    110,
+    245,
+    255,
+    255,
+    131,
+    248,
+    255,
+    255
+   ]
+  }
+ ]
+}

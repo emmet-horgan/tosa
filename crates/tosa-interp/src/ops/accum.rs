@@ -35,6 +35,7 @@ impl Accumulator for AccI32 {
         AccI32(0)
     }
 
+    #[inline(always)]
     fn mac(self, a: i32, b: i32) -> Self {
         AccI32(self.0.wrapping_add(a.wrapping_mul(b)))
     }
@@ -50,6 +51,7 @@ impl Accumulator for AccI64 {
         AccI64(0)
     }
 
+    #[inline(always)]
     fn mac(self, a: i64, b: i64) -> Self {
         AccI64(self.0.wrapping_add(a.wrapping_mul(b)))
     }
@@ -65,6 +67,7 @@ impl Accumulator for AccF32 {
         AccF32(0.0)
     }
 
+    #[inline(always)]
     fn mac(self, a: f32, b: f32) -> Self {
         AccF32(self.0 + a * b)
     }
@@ -81,6 +84,7 @@ impl Accumulator for AccF16 {
         AccF16(0.0)
     }
 
+    #[inline(always)]
     fn mac(self, a: f32, b: f32) -> Self {
         let product = round_to(DType::F16, a * b);
         AccF16(round_to(DType::F16, self.0 + product))
@@ -100,6 +104,7 @@ impl Accumulator for AccF16UnroundedProduct {
         AccF16UnroundedProduct(0.0)
     }
 
+    #[inline(always)]
     fn mac(self, a: f32, b: f32) -> Self {
         AccF16UnroundedProduct(round_to(DType::F16, self.0 + a * b))
     }
@@ -116,6 +121,7 @@ impl Accumulator for AccBf16UnroundedProduct {
         AccBf16UnroundedProduct(0.0)
     }
 
+    #[inline(always)]
     fn mac(self, a: f32, b: f32) -> Self {
         AccBf16UnroundedProduct(round_to(DType::Bf16, self.0 + a * b))
     }
@@ -132,6 +138,7 @@ impl Accumulator for AccBf16 {
         AccBf16(0.0)
     }
 
+    #[inline(always)]
     fn mac(self, a: f32, b: f32) -> Self {
         let product = round_to(DType::Bf16, a * b);
         AccBf16(round_to(DType::Bf16, self.0 + product))

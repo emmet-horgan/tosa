@@ -1,0 +1,22 @@
+{
+ "onnx_file": "model.onnx",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/onnx_testcases.py",
+  "seed": 11,
+  "description": "Grouped (depthwise) Conv, Pad, AveragePool with VALID-like floor sizes,\n    Softmax over axis 1 of a 4-D tensor, MatMul with a 2-D weight, Squeeze.",
+  "opset": 13
+ }
+}

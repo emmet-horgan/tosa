@@ -1,0 +1,25 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "a",
+  "b"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "output",
+  "output_sigmoid"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "Two inputs: ADD(RELU) with broadcasting, MUL by a constant, SUB, LOGISTIC,\n    TANH, MAX_POOL_2D, PAD, MEAN, CONCATENATION, SQUEEZE, RELU6."
+ }
+}

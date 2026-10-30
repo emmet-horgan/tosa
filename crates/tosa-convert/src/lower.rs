@@ -18,10 +18,18 @@ use crate::source::{SourceGraph, SourceNode, SourceTensor, TensorId};
 /// A lowering: emits the TOSA operators for one source node into the context.
 pub type LowerFn = Box<dyn Fn(&SourceNode, &mut LowerCtx<'_>) -> Result<()> + Send + Sync>;
 
-/// Lowerings keyed by source operator name.
+/// A hook on a graph input or output: given the source tensor and the TOSA
+/// tensor holding it (the declared input, or the lowered output), returns
+/// the tensor to use instead (e.g. after a layout or representation change).
+pub type IoHook = Box<dyn Fn(TensorId, TensorRef, &mut LowerCtx<'_>) -> Result<TensorRef> + Send + Sync>;
+
+/// Lowerings keyed by source operator name, plus optional hooks on graph
+/// inputs and outputs.
 #[derive(Default)]
 pub struct LoweringRegistry {
     lowerings: BTreeMap<String, LowerFn>,
+    input_hook: Option<IoHook>,
+    output_hook: Option<IoHook>,
 }
 
 impl LoweringRegistry {
@@ -35,6 +43,24 @@ impl LoweringRegistry {
         F: Fn(&SourceNode, &mut LowerCtx<'_>) -> Result<()> + Send + Sync + 'static,
     {
         self.lowerings.insert(op.to_string(), Box::new(f));
+        self
+    }
+
+    /// Run `f` on every graph input after it is declared.
+    pub fn set_input_hook<F>(&mut self, f: F) -> &mut Self
+    where
+        F: Fn(TensorId, TensorRef, &mut LowerCtx<'_>) -> Result<TensorRef> + Send + Sync + 'static,
+    {
+        self.input_hook = Some(Box::new(f));
+        self
+    }
+
+    /// Run `f` on every graph output before it is marked.
+    pub fn set_output_hook<F>(&mut self, f: F) -> &mut Self
+    where
+        F: Fn(TensorId, TensorRef, &mut LowerCtx<'_>) -> Result<TensorRef> + Send + Sync + 'static,
+    {
+        self.output_hook = Some(Box::new(f));
         self
     }
 
@@ -110,12 +136,39 @@ pub struct LowerCtx<'a> {
     pub source: &'a SourceGraph,
     pub block: BlockBuilder,
     values: HashMap<TensorId, TensorRef>,
+    /// Constants computed during lowering (shape arithmetic resolved at
+    /// conversion time), consulted before the source tensors' own data.
+    computed: HashMap<TensorId, TensorData>,
     node: Option<&'a SourceNode>,
 }
 
 impl<'a> LowerCtx<'a> {
     fn new(source: &'a SourceGraph, block: BlockBuilder) -> Self {
-        LowerCtx { source, block, values: HashMap::new(), node: None }
+        LowerCtx { source, block, values: HashMap::new(), computed: HashMap::new(), node: None }
+    }
+
+    /// The node being lowered.
+    pub fn node(&self) -> Option<&'a SourceNode> {
+        self.node
+    }
+
+    /// Record that source tensor `id` has the constant value `data`
+    /// (computed by a lowering, e.g. a Shape operator on a static tensor).
+    /// Later lowerings see it through [`LowerCtx::constant`], and
+    /// [`LowerCtx::value`] materializes it as a CONST when needed.
+    pub fn define_constant(&mut self, id: TensorId, data: TensorData) {
+        self.computed.insert(id, data);
+    }
+
+    /// Whether source tensor `id` has a value known at conversion time.
+    pub fn is_constant(&self, id: TensorId) -> bool {
+        self.computed.contains_key(&id) || self.tensor(id).is_constant()
+    }
+
+    /// Whether source tensor `id` is already bound to a TOSA tensor (an
+    /// input, an operator output or a materialized constant).
+    pub fn is_available_as_value(&self, id: TensorId) -> bool {
+        self.values.contains_key(&id)
     }
 
     /// The source tensor `id`.
@@ -141,7 +194,7 @@ impl<'a> LowerCtx<'a> {
     /// Whether source tensor `id` has been bound to a TOSA tensor (or is a
     /// constant, which can be materialized).
     pub fn is_available(&self, id: TensorId) -> bool {
-        self.values.contains_key(&id) || self.tensor(id).is_constant()
+        self.values.contains_key(&id) || self.is_constant(id)
     }
 
     /// The TOSA tensor holding source tensor `id`: a graph input, a value
@@ -152,6 +205,13 @@ impl<'a> LowerCtx<'a> {
             return Ok(v.clone());
         }
         let t = self.tensor(id);
+        if let Some(data) = self.computed.get(&id) {
+            // Shape of a computed constant: the source shape if static, else flat.
+            let shape = if t.is_static() && t.rank() > 0 { t.tosa_shape() } else { vec![data.len() as i32] };
+            let v = self.block.constant(&t.name, &shape, data.clone())?;
+            self.values.insert(id, v.clone());
+            return Ok(v);
+        }
         let Some(data) = &t.constant else {
             return self.fail(format!("tensor '{}' is used before it is produced", t.name));
         };
@@ -171,7 +231,10 @@ impl<'a> LowerCtx<'a> {
 
     /// The constant data of source tensor `id`, for lowerings that need to
     /// read an operand (shapes, axes, quantization tables) at conversion time.
-    pub fn constant(&self, id: TensorId) -> Result<&'a TensorData> {
+    pub fn constant(&self, id: TensorId) -> Result<&TensorData> {
+        if let Some(d) = self.computed.get(&id) {
+            return Ok(d);
+        }
         let t = self.tensor(id);
         match &t.constant {
             Some(d) => Ok(d),
@@ -206,6 +269,24 @@ impl<'a> LowerCtx<'a> {
         let out = self.block.op1(op, attribute, inputs, dtype, &t.tosa_shape(), &t.name);
         self.values.insert(id, out.clone());
         Ok(out)
+    }
+
+    /// Emit a single-output operator whose output is source tensor `id`, with
+    /// an explicitly computed `shape` (for formats that do not record
+    /// intermediate shapes) and `dtype`.
+    pub fn emit_shaped(
+        &mut self,
+        op: Op,
+        attribute: OpAttribute,
+        inputs: &[&TensorRef],
+        id: TensorId,
+        dtype: DType,
+        shape: &[i32],
+    ) -> TensorRef {
+        let name = self.tensor(id).name.clone();
+        let out = self.block.op1(op, attribute, inputs, dtype, shape, &name);
+        self.values.insert(id, out.clone());
+        out
     }
 
     /// Emit a single-output operator producing an intermediate tensor (not a
@@ -251,7 +332,11 @@ pub fn lower_graph(source: &SourceGraph, registry: &LoweringRegistry, options: &
     for &id in &source.inputs {
         let t = ctx.tensor(id);
         let dtype = ctx.dtype(id)?;
-        let v = ctx.block.input(&t.name, dtype, &t.tosa_shape());
+        let mut v = ctx.block.input(&t.name, dtype, &t.tosa_shape());
+        if let Some(hook) = &registry.input_hook {
+            ctx.block.set_location(Some(t.name.clone()));
+            v = hook(id, v, &mut ctx)?;
+        }
         ctx.bind(id, v);
     }
 
@@ -264,7 +349,7 @@ pub fn lower_graph(source: &SourceGraph, registry: &LoweringRegistry, options: &
             other => ConvertError::Lowering { op: node.op.clone(), node: node.name.clone(), reason: other.to_string() },
         })?;
         for &out in &node.outputs {
-            if !ctx.values.contains_key(&out) {
+            if !ctx.values.contains_key(&out) && !ctx.computed.contains_key(&out) {
                 let name = ctx.tensor(out).name.clone();
                 return Err(ConvertError::Lowering {
                     op: node.op.clone(),
@@ -280,6 +365,11 @@ pub fn lower_graph(source: &SourceGraph, registry: &LoweringRegistry, options: &
     let mut emitted = std::collections::HashSet::new();
     for &id in &source.outputs {
         let mut v = ctx.value(id)?;
+        if let Some(hook) = &registry.output_hook {
+            ctx.block.set_location(Some(ctx.tensor(id).name.clone()));
+            v = hook(id, v, &mut ctx)?;
+            ctx.block.set_location(None);
+        }
         let t = ctx.tensor(id);
         // Each graph output must be a distinct tensor that is not also an
         // input, and should carry the source model's output name.

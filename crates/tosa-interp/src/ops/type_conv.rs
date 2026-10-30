@@ -85,6 +85,65 @@ pub fn eval_cast(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     Ok(())
 }
 
+/// The scale32 RESCALE of every element of `values`, per channel (the last
+/// dimension, `channels` wide), with TOSA's single or double rounding.
+/// Values the reference model would reject are handed to `slow`, which
+/// produces the matching error.
+#[allow(clippy::too_many_arguments)]
+fn rescale_fast<I: Copy + Into<i64>, O: WrapFromI64>(
+    values: &[I],
+    params: &[(i64, i64, i64, i64)],
+    channels: usize,
+    in_zp: i64,
+    out_zp: i64,
+    lo: i64,
+    hi: i64,
+    double: bool,
+    slow: &dyn Fn(i64, i64, i64) -> Result<i64>,
+) -> Result<Vec<O>> {
+    let mut out = Vec::with_capacity(values.len());
+    for row in values.chunks(channels) {
+        for (&x, &(m, s, round_pos, bound)) in row.iter().zip(params) {
+            let x: i64 = x.into() - in_zp;
+            if x < -bound || x >= bound {
+                slow(x, m, s)?;
+                return Err(Error::GraphError("apply_scale_32: value out of range".into()));
+            }
+            let round = if double && s > 31 && x < 0 { bound - (1i64 << 30) } else { round_pos };
+            let result = ((x * m + round) >> s) + out_zp;
+            if result < i32::MIN as i64 || result > i32::MAX as i64 {
+                return Err(invalid("RESCALE", format!("result {result} exceeds the int32 range")));
+            }
+            // Unsigned outputs hold values up to 255 / 65535 as their bit patterns.
+            out.push(O::wrap(result.clamp(lo, hi)));
+        }
+    }
+    Ok(out)
+}
+
+/// Truncating conversion from `i64`, as `int_data` performs it.
+trait WrapFromI64 {
+    fn wrap(v: i64) -> Self;
+}
+
+impl WrapFromI64 for i8 {
+    fn wrap(v: i64) -> Self {
+        v as i8
+    }
+}
+
+impl WrapFromI64 for i16 {
+    fn wrap(v: i64) -> Self {
+        v as i16
+    }
+}
+
+impl WrapFromI64 for i32 {
+    fn wrap(v: i64) -> Self {
+        v as i32
+    }
+}
+
 /// `round(value * multiplier / 2^shift)` with a 16-bit multiplier.
 fn apply_scale_16(value: i64, multiplier: i16, shift: i32) -> Result<i32> {
     if multiplier < 0 || !(2..=62).contains(&shift) {
@@ -173,11 +232,10 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let shifts = int_values(&shift.data).unwrap();
     let (lo, hi) = if output_unsigned { (0, (1i64 << bit_width(out_t)) - 1) } else { int_range(out_t) };
     let values = int_values(&input.data).unwrap();
-    let mut out = Vec::with_capacity(values.len());
-    for (i, &v) in values.iter().enumerate() {
-        let ch = if per_channel { i % channels } else { 0 };
-        let (m, s) = (multipliers[ch] as i32, shifts[ch] as i32);
-        let x = extend(in_t, v, input_unsigned) - in_zp;
+
+    // One element, with every check the reference model performs.
+    let slow = |x: i64, m: i64, s: i64| -> Result<i64> {
+        let (m, s) = (m as i32, s as i32);
         let scaled = match rounding_mode {
             RoundingMode::Inexact => (x as f32 * m as f32 * libm::ldexpf(1.0, -s)).round_ties_even() as i32,
             _ if scale32 => apply_scale_32(x as i32, m, s, rounding_mode == RoundingMode::Double)?,
@@ -187,7 +245,64 @@ pub fn eval_rescale(state: &mut InterpreterState, op: &Operator) -> Result<()> {
         if i32::try_from(result).is_err() {
             return Err(invalid(OP, format!("result {result} exceeds the int32 range")));
         }
-        out.push(result.clamp(lo, hi));
+        Ok(result.clamp(lo, hi))
+    };
+
+    let fast = scale32 && rounding_mode != RoundingMode::Inexact && !input_unsigned;
+    if fast {
+        // Per-channel constants: (multiplier, shift, rounding term, |value| bound).
+        let params: Vec<(i64, i64, i64, i64)> = multipliers
+            .iter()
+            .zip(&shifts)
+            .map(|(&m, &s)| {
+                let round = 1i64 << (s - 1).clamp(0, 62);
+                let extra = if rounding_mode == RoundingMode::Double && s > 31 { 1i64 << 30 } else { 0 };
+                (m, s, round + extra, round)
+            })
+            .collect();
+        let valid = params.iter().all(|&(m, s, _, _)| m >= 0 && (2..=62).contains(&s));
+        if valid {
+            let double = rounding_mode == RoundingMode::Double;
+            // Straight from the input element type to the output element type.
+            let data = match (&input.data, out_t) {
+                (TensorData::I8(v), I8) => {
+                    TensorData::I8(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I8(v), I16) => {
+                    TensorData::I16(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I8(v), I32) => {
+                    TensorData::I32(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I16(v), I8) => {
+                    TensorData::I8(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I16(v), I16) => {
+                    TensorData::I16(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I16(v), I32) => {
+                    TensorData::I32(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I32(v), I8) => {
+                    TensorData::I8(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I32(v), I16) => {
+                    TensorData::I16(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                (TensorData::I32(v), I32) => {
+                    TensorData::I32(rescale_fast(v, &params, channels, in_zp, out_zp, lo, hi, double, &slow)?)
+                }
+                _ => return Err(Error::DTypeMismatch(format!("{OP}: unsupported types {in_t:?} -> {out_t:?}"))),
+            };
+            state.set_tensor(Tensor::new(op.outputs[0].clone(), shape, data));
+            return Ok(());
+        }
+    }
+    let mut out = Vec::with_capacity(values.len());
+    for (i, &v) in values.iter().enumerate() {
+        let ch = if per_channel { i % channels } else { 0 };
+        let x = extend(in_t, v, input_unsigned) - in_zp;
+        out.push(slow(x, multipliers[ch], shifts[ch])?);
     }
     state.set_tensor(Tensor::new(op.outputs[0].clone(), shape, int_data(out_t, out)?));
     Ok(())

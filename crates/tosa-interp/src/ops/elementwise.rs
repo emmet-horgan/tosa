@@ -324,6 +324,28 @@ pub fn eval_clamp(state: &mut InterpreterState, op: &Operator) -> Result<()> {
     let nan_mode = check_nan_mode(OP, *nan_mode)?;
     let dtype = state.get_tensor(op.inputs.first().map_or("", String::as_str))?.dtype();
     let (min, max) = clamp_bounds(OP, dtype, min_val, max_val)?;
+    // Integer data: clamp in place without widening.
+    if matches!(dtype, DType::I8 | DType::I16) {
+        expect_operands(op, OP, 1, 1)?;
+        let (lo, hi) = (int_values(&min).unwrap()[0], int_values(&max).unwrap()[0]);
+        if hi < lo {
+            return Err(invalid(OP, "max_val must not be smaller than min_val"));
+        }
+        let input = state.get_tensor(&op.inputs[0])?;
+        let shape = input.shape.clone();
+        let data = match &input.data {
+            TensorData::I8(v) => {
+                let (lo, hi) = (lo as i8, hi as i8);
+                TensorData::I8(v.iter().map(|&x| x.clamp(lo, hi)).collect())
+            }
+            TensorData::I16(v) => {
+                let (lo, hi) = (lo as i16, hi as i16);
+                TensorData::I16(v.iter().map(|&x| x.clamp(lo, hi)).collect())
+            }
+            _ => unreachable!("dtype checked above"),
+        };
+        return finish(state, op, OP, shape, data);
+    }
     eval_unary(state, op, OP, &[DType::F16, DType::Bf16, DType::F32, DType::I8, DType::I16], |dt, l| match l {
         Lane::Int(v) => {
             let (lo, hi) = (int_values(&min).unwrap()[0], int_values(&max).unwrap()[0]);

@@ -1,0 +1,474 @@
+{
+ "version": 3,
+ "operator_codes": [
+  {
+   "deprecated_builtin_code": 0,
+   "version": 1,
+   "builtin_code": "ADD"
+  },
+  {
+   "deprecated_builtin_code": 18,
+   "version": 1,
+   "builtin_code": "MUL"
+  },
+  {
+   "deprecated_builtin_code": 41,
+   "version": 1,
+   "builtin_code": "SUB"
+  },
+  {
+   "deprecated_builtin_code": 14,
+   "version": 1,
+   "builtin_code": "LOGISTIC"
+  },
+  {
+   "deprecated_builtin_code": 28,
+   "version": 1,
+   "builtin_code": "TANH"
+  },
+  {
+   "deprecated_builtin_code": 17,
+   "version": 1,
+   "builtin_code": "MAX_POOL_2D"
+  },
+  {
+   "deprecated_builtin_code": 34,
+   "version": 1,
+   "builtin_code": "PAD"
+  },
+  {
+   "deprecated_builtin_code": 40,
+   "version": 1,
+   "builtin_code": "MEAN"
+  },
+  {
+   "deprecated_builtin_code": 2,
+   "version": 1,
+   "builtin_code": "CONCATENATION"
+  },
+  {
+   "deprecated_builtin_code": 43,
+   "version": 1,
+   "builtin_code": "SQUEEZE"
+  },
+  {
+   "deprecated_builtin_code": 21,
+   "version": 1,
+   "builtin_code": "RELU6"
+  },
+  {
+   "deprecated_builtin_code": 19,
+   "version": 1,
+   "builtin_code": "RELU"
+  }
+ ],
+ "subgraphs": [
+  {
+   "tensors": [
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "a"
+    },
+    {
+     "shape": [
+      1,
+      1,
+      1,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "b"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "sum"
+    },
+    {
+     "shape": [
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 1,
+     "name": "k"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "mul"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "diff"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "sigmoid"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "tanh"
+    },
+    {
+     "shape": [
+      1,
+      2,
+      2,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "maxpool"
+    },
+    {
+     "shape": [
+      4,
+      2
+     ],
+     "type": "INT32",
+     "buffer": 2,
+     "name": "pads"
+    },
+    {
+     "shape": [
+      1,
+      3,
+      3,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "padded"
+    },
+    {
+     "shape": [
+      2
+     ],
+     "type": "INT32",
+     "buffer": 3,
+     "name": "axes"
+    },
+    {
+     "shape": [
+      1,
+      1,
+      1,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "mean"
+    },
+    {
+     "shape": [
+      1,
+      1,
+      1,
+      4
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "concat"
+    },
+    {
+     "shape": [
+      1,
+      4
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "squeezed"
+    },
+    {
+     "shape": [
+      1,
+      4
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "output"
+    },
+    {
+     "shape": [
+      1,
+      4,
+      4,
+      2
+     ],
+     "type": "FLOAT32",
+     "buffer": 0,
+     "name": "output_sigmoid"
+    }
+   ],
+   "inputs": [
+    0,
+    1
+   ],
+   "outputs": [
+    15,
+    16
+   ],
+   "operators": [
+    {
+     "opcode_index": 0,
+     "inputs": [
+      0,
+      1
+     ],
+     "outputs": [
+      2
+     ],
+     "builtin_options_type": "AddOptions",
+     "builtin_options": {
+      "fused_activation_function": "RELU"
+     }
+    },
+    {
+     "opcode_index": 1,
+     "inputs": [
+      2,
+      3
+     ],
+     "outputs": [
+      4
+     ],
+     "builtin_options_type": "MulOptions",
+     "builtin_options": {
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 2,
+     "inputs": [
+      4,
+      0
+     ],
+     "outputs": [
+      5
+     ],
+     "builtin_options_type": "SubOptions",
+     "builtin_options": {
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 3,
+     "inputs": [
+      5
+     ],
+     "outputs": [
+      6
+     ]
+    },
+    {
+     "opcode_index": 4,
+     "inputs": [
+      5
+     ],
+     "outputs": [
+      7
+     ]
+    },
+    {
+     "opcode_index": 5,
+     "inputs": [
+      7
+     ],
+     "outputs": [
+      8
+     ],
+     "builtin_options_type": "Pool2DOptions",
+     "builtin_options": {
+      "padding": "SAME",
+      "stride_w": 2,
+      "stride_h": 2,
+      "filter_width": 3,
+      "filter_height": 3,
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 6,
+     "inputs": [
+      8,
+      9
+     ],
+     "outputs": [
+      10
+     ],
+     "builtin_options_type": "PadOptions",
+     "builtin_options": {}
+    },
+    {
+     "opcode_index": 7,
+     "inputs": [
+      10,
+      11
+     ],
+     "outputs": [
+      12
+     ],
+     "builtin_options_type": "ReducerOptions",
+     "builtin_options": {
+      "keep_dims": true
+     }
+    },
+    {
+     "opcode_index": 8,
+     "inputs": [
+      12,
+      1
+     ],
+     "outputs": [
+      13
+     ],
+     "builtin_options_type": "ConcatenationOptions",
+     "builtin_options": {
+      "axis": 3,
+      "fused_activation_function": "NONE"
+     }
+    },
+    {
+     "opcode_index": 9,
+     "inputs": [
+      13
+     ],
+     "outputs": [
+      14
+     ],
+     "builtin_options_type": "SqueezeOptions",
+     "builtin_options": {
+      "squeeze_dims": [
+       1,
+       2
+      ]
+     }
+    },
+    {
+     "opcode_index": 10,
+     "inputs": [
+      14
+     ],
+     "outputs": [
+      15
+     ]
+    },
+    {
+     "opcode_index": 11,
+     "inputs": [
+      6
+     ],
+     "outputs": [
+      16
+     ]
+    }
+   ],
+   "name": "main"
+  }
+ ],
+ "description": "tosa-convert test case elementwise_f32",
+ "buffers": [
+  {},
+  {
+   "data": [
+    0,
+    0,
+    0,
+    63,
+    0,
+    0,
+    0,
+    192
+   ]
+  },
+  {
+   "data": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "data": [
+    1,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0
+   ]
+  }
+ ]
+}

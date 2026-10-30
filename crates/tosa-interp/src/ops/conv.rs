@@ -36,6 +36,27 @@ trait ConvLoop {
 
     /// Accumulators for every output element, in row-major output order.
     fn accumulate<A: Accumulator>(&self, input: &[A::Operand], weight: &[A::Operand]) -> Vec<A>;
+
+    /// INT32 accumulation of integer operands (zero points already
+    /// subtracted). Wrapping 32-bit addition is associative, so unlike the
+    /// float paths this may sum in any order and still produce the reference
+    /// model's bits; the default is the generic loop.
+    fn accumulate_i32(&self, input: &[i32], weight: &[i32]) -> Vec<i32> {
+        self.accumulate::<AccI32>(input, weight).into_iter().map(|a| a.0).collect()
+    }
+}
+
+/// Integer elements minus a zero point, as `i32` operands (every integer
+/// type narrower than 32 bits, and INT32 itself, fits after the subtraction
+/// for the zero points the specification allows).
+fn int_operands_i32(data: &TensorData, zp: i64) -> Vec<i32> {
+    let zp = zp as i32;
+    match data {
+        TensorData::I4(v) | TensorData::I8(v) => v.iter().map(|&x| x as i32 - zp).collect(),
+        TensorData::I16(v) => v.iter().map(|&x| x as i32 - zp).collect(),
+        TensorData::I32(v) => v.iter().map(|&x| x.wrapping_sub(zp)).collect(),
+        other => int_values(other).unwrap_or_default().iter().map(|&x| (x - zp as i64) as i32).collect(),
+    }
 }
 
 fn to_usize(v: &[i32]) -> Vec<usize> {
@@ -155,37 +176,55 @@ impl ConvLoop for ConvNd {
         [vec![self.n], self.out_sp.clone(), vec![self.oc]].concat()
     }
 
-    /// Reference loop order: batch, output position, oc, then kernel
-    /// position (row-major) and ic innermost.
+    /// Reference accumulation order for every output element: kernel
+    /// positions in row-major order (padding skipped) and `ic` innermost.
+    ///
+    /// The loops are arranged so that all `oc` accumulators of one output
+    /// position advance together: the weights are re-laid out once as
+    /// `[tap][ic][oc]`, and the innermost loop updates the `oc` independent
+    /// accumulators from contiguous weights. Each element's own chain still
+    /// sees its products in the reference order, so results are identical.
     fn accumulate<A: Accumulator>(&self, input: &[A::Operand], weight: &[A::Operand]) -> Vec<A> {
         let dims = self.in_sp.len();
+        let (ic, oc) = (self.ic, self.oc);
         let k_count: usize = self.kernel.iter().product();
         let out_count: usize = self.out_sp.iter().product();
         let kernel_pos: Vec<Vec<usize>> = (0..k_count).map(|i| unravel(i, &self.kernel)).collect();
-        let mut out = Vec::with_capacity(self.n * out_count * self.oc);
+        // weights as [tap][ic][oc]
+        let transposed: Vec<A::Operand> = (0..k_count * ic * oc)
+            .map(|idx| {
+                let o = idx % oc;
+                let rest = idx / oc;
+                let (ki, c) = (rest / ic, rest % ic);
+                weight[(o * k_count + ki) * ic + c]
+            })
+            .collect();
+        let mut out = Vec::with_capacity(self.n * out_count * oc);
+        let mut acc = vec![A::zero(); oc];
         let mut opos = vec![0; dims];
         for b in 0..self.n {
+            opos.iter_mut().for_each(|p| *p = 0);
             for _ in 0..out_count {
-                for oc in 0..self.oc {
-                    let mut acc = A::zero();
-                    'taps: for (ki, kpos) in kernel_pos.iter().enumerate() {
-                        let mut flat = b;
-                        for d in 0..dims {
-                            let x = (opos[d] * self.stride[d] + kpos[d] * self.dilation[d]) as isize
-                                - self.pad_before[d] as isize;
-                            if x < 0 || x >= self.in_sp[d] as isize {
-                                continue 'taps;
-                            }
-                            flat = flat * self.in_sp[d] + x as usize;
+                acc.iter_mut().for_each(|a| *a = A::zero());
+                'taps: for (ki, kpos) in kernel_pos.iter().enumerate() {
+                    let mut flat = b;
+                    for d in 0..dims {
+                        let x = (opos[d] * self.stride[d] + kpos[d] * self.dilation[d]) as isize
+                            - self.pad_before[d] as isize;
+                        if x < 0 || x >= self.in_sp[d] as isize {
+                            continue 'taps;
                         }
-                        let i_base = flat * self.ic;
-                        let w_base = (oc * k_count + ki) * self.ic;
-                        for c in 0..self.ic {
-                            acc = acc.mac(input[i_base + c], weight[w_base + c]);
+                        flat = flat * self.in_sp[d] + x as usize;
+                    }
+                    let patch = &input[flat * ic..(flat + 1) * ic];
+                    let rows = &transposed[ki * ic * oc..(ki + 1) * ic * oc];
+                    for (&x, row) in patch.iter().zip(rows.chunks_exact(oc)) {
+                        for (a, &w) in acc.iter_mut().zip(row) {
+                            *a = a.mac(x, w);
                         }
                     }
-                    out.push(acc);
                 }
+                out.extend_from_slice(&acc);
                 increment(&mut opos, &self.out_sp);
             }
         }
@@ -243,34 +282,49 @@ impl ConvLoop for Depthwise {
         vec![self.n, self.oh, self.ow, self.c * self.m]
     }
 
+    /// Reference order per output element: kernel positions row-major
+    /// (padding skipped). All `C * M` channels of an output position are
+    /// accumulated together, tap by tap, from contiguous weights.
     fn accumulate<A: Accumulator>(&self, input: &[A::Operand], weight: &[A::Operand]) -> Vec<A> {
-        let mut out = Vec::with_capacity(self.n * self.oh * self.ow * self.c * self.m);
+        let (c, m) = (self.c, self.m);
+        let width = c * m;
+        let mut out = Vec::with_capacity(self.n * self.oh * self.ow * width);
+        let mut acc = vec![A::zero(); width];
         for b in 0..self.n {
             for oy in 0..self.oh {
                 let iy = (oy * self.stride[0]) as isize - self.pad_top as isize;
                 for ox in 0..self.ow {
                     let ix = (ox * self.stride[1]) as isize - self.pad_left as isize;
-                    for c in 0..self.c {
-                        for m in 0..self.m {
-                            let mut acc = A::zero();
-                            for ky in 0..self.kh {
-                                let y = iy + (ky * self.dilation[0]) as isize;
-                                if y < 0 || y >= self.ih as isize {
-                                    continue;
+                    acc.iter_mut().for_each(|a| *a = A::zero());
+                    for ky in 0..self.kh {
+                        let y = iy + (ky * self.dilation[0]) as isize;
+                        if y < 0 || y >= self.ih as isize {
+                            continue;
+                        }
+                        for kx in 0..self.kw {
+                            let x = ix + (kx * self.dilation[1]) as isize;
+                            if x < 0 || x >= self.iw as isize {
+                                continue;
+                            }
+                            let i_base = ((b * self.ih + y as usize) * self.iw + x as usize) * c;
+                            let patch = &input[i_base..i_base + c];
+                            let w_base = (ky * self.kw + kx) * width;
+                            let taps = &weight[w_base..w_base + width];
+                            if m == 1 {
+                                for ((a, &x), &w) in acc.iter_mut().zip(patch).zip(taps) {
+                                    *a = a.mac(x, w);
                                 }
-                                for kx in 0..self.kw {
-                                    let x = ix + (kx * self.dilation[1]) as isize;
-                                    if x < 0 || x >= self.iw as isize {
-                                        continue;
+                            } else {
+                                for (ch, &x) in patch.iter().enumerate() {
+                                    for (a, &w) in acc[ch * m..(ch + 1) * m].iter_mut().zip(&taps[ch * m..(ch + 1) * m])
+                                    {
+                                        *a = a.mac(x, w);
                                     }
-                                    let i = ((b * self.ih + y as usize) * self.iw + x as usize) * self.c + c;
-                                    let w = ((ky * self.kw + kx) * self.c + c) * self.m + m;
-                                    acc = acc.mac(input[i], weight[w]);
                                 }
                             }
-                            out.push(acc);
                         }
                     }
+                    out.extend_from_slice(&acc);
                 }
             }
         }
@@ -466,16 +520,15 @@ fn eval_conv<L: ConvLoop>(
         if w_zp != 0 && w_t != DType::I8 {
             return Err(invalid(name, "weight zero point must be zero for non-int8 weight"));
         }
-        let inp: Vec<i64> = int_values(&input.data).unwrap().iter().map(|&v| v - in_zp).collect();
-        let wgt: Vec<i64> = int_values(&weight.data).unwrap().iter().map(|&v| v - w_zp).collect();
         let bis = int_values(&bias.data).unwrap();
 
         if acc_t == DType::I32 {
-            let to_i32 = |v: Vec<i64>| -> Vec<i32> { v.into_iter().map(|x| x as i32).collect() };
-            let acc = g.accumulate::<AccI32>(&to_i32(inp), &to_i32(wgt));
-            let out = acc.iter().enumerate().map(|(i, a)| a.0.wrapping_add(bis[bias_idx(i)] as i32)).collect();
+            let acc = g.accumulate_i32(&int_operands_i32(&input.data, in_zp), &int_operands_i32(&weight.data, w_zp));
+            let out = acc.iter().enumerate().map(|(i, &a)| a.wrapping_add(bis[bias_idx(i)] as i32)).collect();
             TensorData::I32(out)
         } else {
+            let inp: Vec<i64> = int_values(&input.data).unwrap().iter().map(|&v| v - in_zp).collect();
+            let wgt: Vec<i64> = int_values(&weight.data).unwrap().iter().map(|&v| v - w_zp).collect();
             let acc = g.accumulate::<AccI64>(&inp, &wgt);
             let out = acc
                 .iter()
