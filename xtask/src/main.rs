@@ -1,7 +1,7 @@
 //! Development tasks for tosa-interp, run as `cargo xtask <task>`.
 //!
 //! - `codegen`: regenerate the FlatBuffers bindings in
-//!   `src/generated/tosa_generated.rs` from `schema/tosa.fbs`.
+//!   `crates/tosa-ir/src/generated/tosa_generated.rs` from `crates/tosa-ir/schema/tosa.fbs`.
 //! - `codegen --check`: fail if the checked-in bindings are out of date.
 //!
 //! `flatc` comes from the `flatc-fork` crate, which builds the FlatBuffers
@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const SCHEMA: &str = "schema/tosa.fbs";
-const GENERATED: &str = "src/generated/tosa_generated.rs";
+const SCHEMA: &str = "crates/tosa-ir/schema/tosa.fbs";
+const GENERATED: &str = "crates/tosa-ir/src/generated/tosa_generated.rs";
 
 const USAGE: &str = "usage: cargo xtask codegen [--check]";
 

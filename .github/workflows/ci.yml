@@ -47,8 +47,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # Unit, API, conformance and network tests. Debug mode keeps integer
-      # overflow checks enabled; the conformance suite takes under a minute.
+      # Every crate's unit and integration tests, including the conformance
+      # suite. Debug mode keeps integer overflow checks enabled.
       - name: Test
         run: cargo test --all-targets
       - name: Doc tests
@@ -85,5 +85,5 @@ jobs:
       # cache makes later runs fast.
       - name: Clippy (xtask)
         run: cargo clippy -p xtask -- -D warnings
-      - name: Check src/generated matches schema/tosa.fbs
+      - name: Check the generated flatbuffer bindings match the schema
         run: cargo xtask codegen --check

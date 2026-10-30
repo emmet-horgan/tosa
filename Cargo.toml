@@ -1,27 +1,27 @@
 [workspace]
-members = [".", "xtask"]
-# cargo build / cargo test cover the library only; xtask compiles flatc.
-default-members = ["."]
+resolver = "3"
+members = ["crates/*", "xtask"]
+# cargo build / cargo test cover the toolkit crates; xtask compiles flatc.
+default-members = ["crates/tosa-ir", "crates/tosa-interp", "crates/tosa-convert", "crates/tosa-cli"]
 
-[package]
-name = "tosa-interp"
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+repository = "https://github.com/emmethorgan/tosa"
 
-[dependencies]
+[workspace.dependencies]
+tosa-ir = { path = "crates/tosa-ir", version = "0.1.0" }
+tosa-interp = { path = "crates/tosa-interp", version = "0.1.0" }
+tosa-convert = { path = "crates/tosa-convert", version = "0.1.0" }
+
 # Must match the flatc version used by cargo xtask codegen (flatc-fork).
 flatbuffers = "25.12.19"
 half = { version = "2", features = ["num-traits"] }
 libm = "0.2.16"
 thiserror = "2"
-
-[dev-dependencies]
-libtest-mimic = "0.8.2"
-npyz = "0.8"
+clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[[test]]
-name = "conformance"
-harness = false
+libtest-mimic = "0.8.2"
+criterion = { version = "0.7", default-features = false }

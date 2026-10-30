@@ -1,0 +1,12 @@
+[package]
+name = "tosa-ir"
+description = "TOSA graph IR: flatbuffer reading and writing, a graph builder, tensors and element types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+flatbuffers.workspace = true
+half.workspace = true
+thiserror.workspace = true

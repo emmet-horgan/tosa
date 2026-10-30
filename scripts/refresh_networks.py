@@ -3,10 +3,10 @@
 # requires-python = ">=3.10"
 # dependencies = ["tosa-tools==2026.8.0"]
 # ///
-"""Refresh the reference outputs of the multi-operator test cases in ``tests/networks``.
+"""Refresh the reference outputs of the multi-operator test cases in ``crates/tosa-interp/tests/networks``.
 
-Every directory below ``tests/networks`` containing a ``desc.json`` is a test
-case in the conformance format (see ``tests/conformance.rs``): a ``.tosa``
+Every directory below ``crates/tosa-interp/tests/networks`` containing a ``desc.json`` is a test
+case in the conformance format (see ``crates/tosa-interp/tests/conformance.rs``): a ``.tosa``
 graph, one ``.npy`` per input and one ``ref-<output>.npy`` per output. The
 graphs and inputs are checked in; this script reruns the TOSA reference model
 on each case to regenerate the expected outputs, e.g. after upgrading the
@@ -20,7 +20,7 @@ or with a Python environment that already has ``tosa-tools`` installed:
 
     python scripts/refresh_networks.py
 
-To add a case, create ``tests/networks/<name>/`` with the graph, the input
+To add a case, create ``crates/tosa-interp/tests/networks/<name>/`` with the graph, the input
 ``.npy`` files and a ``desc.json`` naming them, then run this script.
 """
 
@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_conformance import REPO, find_ref_model, run_ref_model  # noqa: E402
 
-NETWORKS = REPO / "tests" / "networks"
+NETWORKS = REPO / "crates" / "tosa-interp" / "tests" / "networks"
 
 
 def main() -> None:

@@ -27,27 +27,35 @@ Per-operator results and coverage are tracked in
 
 | Suite | Location | What it checks |
 |---|---|---|
-| Unit tests | `src/**` (`#[cfg(test)]`) | Numeric building blocks: FP8 encoding, the `expf` port, broadcasting, fixed-point scaling. |
-| API tests | `tests/integration.rs` | The public API: `run_graph*`, error reporting for bad inputs and invalid flatbuffers, and the hooks (`StatsCollector`, `FlopCounter`, `OpTrace`, `HookSet`), cross-checked against each other and the graph. |
-| Conformance | `tests/conformance.rs` over `tests/conformance/<op>/<case>/` | Every operator against the reference model: over 3000 cases covering every type signature, special values (NaN, infinities, extreme magnitudes), attribute edge cases and every ERROR_IF kind. |
-| Networks | `tests/conformance.rs` over `tests/networks/<case>/` | Multi-operator graphs against the reference model, run by the same harness and named `networks::<case>`. |
+| Unit tests | `crates/*/src/**` (`#[cfg(test)]`) | Numeric building blocks (FP8 encoding, the `expf` port, broadcasting, fixed-point scaling), the execution planner, raw tensor encoding, quantization arithmetic and layout permutations. |
+| API tests | `crates/tosa-interp/tests/integration.rs` | The public API: `run_graph*`, error reporting for bad inputs and invalid flatbuffers, and the hooks (`StatsCollector`, `FlopCounter`, `OpTrace`, `HookSet`), cross-checked against each other and the graph. |
+| Interpreter tests | `crates/tosa-interp/tests/interpreter.rs` | Interpreter mechanics on hand-built graphs and checked-in cases: graph validation when an `Interpreter` is created (undefined tensors, duplicate producers, cycles, oversized tensors), input and output checking, tensor lifetimes and memory accounting, persistent variables and their ordering, hooks inside COND_IF / WHILE_LOOP, and structured operator errors. |
+| Conformance | `crates/tosa-interp/tests/conformance.rs` over `crates/tosa-interp/tests/conformance/<op>/<case>/` | Every operator against the reference model: over 3000 cases covering every type signature, special values (NaN, infinities, extreme magnitudes), attribute edge cases and every ERROR_IF kind. |
+| Networks | `crates/tosa-interp/tests/conformance.rs` over `crates/tosa-interp/tests/networks/<case>/` | Multi-operator graphs against the reference model, run by the same harness and named `networks::<case>`. |
+| IR round trips | `crates/tosa-ir/tests/roundtrip.rs` | Every checked-in `.tosa` file survives parse -> serialize -> parse unchanged, so the serializer is exercised on every operator and attribute the reference model emits. |
+| Conversion framework | `crates/tosa-convert/tests/framework.rs` | A toy frontend lowered through the framework and executed by the interpreter: lowering, locations, unsupported-operator reports, output naming, the cleanup passes and RESCALE emission. |
 
 Run a single suite, or filter by name:
 
 ```sh
-cargo test --lib                          # unit tests
-cargo test --test integration             # API tests
-cargo test --test conformance             # conformance and network cases
-cargo test --test conformance conv2d      # cases whose name contains "conv2d"
-cargo test --test conformance networks::  # network cases only
+cargo test --lib                                        # every crate's unit tests
+cargo test -p tosa-interp --test integration             # API tests
+cargo test -p tosa-interp --test interpreter             # interpreter mechanics
+cargo test -p tosa-interp --test conformance             # conformance and network cases
+cargo test -p tosa-interp --test conformance conv2d      # cases whose name contains "conv2d"
+cargo test -p tosa-interp --test conformance networks::  # network cases only
+cargo test -p tosa-ir                                    # IR round trips and the builder
+cargo test -p tosa-convert                               # the conversion framework
 ```
 
-The conformance suite takes about half a minute in a debug build and a
-fraction of a second with `--release`.
+The conformance suite takes well under a second in either build mode (the
+cases are small); `cargo bench` runs the network cases under
+[criterion](https://crates.io/crates/criterion) in release mode to track
+interpreter throughput.
 
 ## The conformance harness
 
-`tests/conformance.rs` is a custom test harness (`harness = false`, using
+`crates/tosa-interp/tests/conformance.rs` is a custom test harness (`harness = false`, using
 [libtest-mimic](https://crates.io/crates/libtest-mimic)) that turns every
 directory containing a `desc.json` into one test, so the usual `cargo test`
 filtering and reporting work.
@@ -88,7 +96,7 @@ exceptions:
 | FFT2D, RFFT2D | absolute error of 2^-20 x the sum of the input magnitudes | Sums of products with `sinf`/`cosf` twiddle factors, so the error scales with the inputs. Observed: at most 3.3e-8 x the sum. |
 
 Everything else must match exactly, including EXP, SIGMOID and TANH (the
-reference bundles its own `expf`, which `src/ops/math.rs` ports exactly), the
+reference bundles its own `expf`, which `crates/tosa-interp/src/ops/math.rs` ports exactly), the
 float-accumulating operators (whose accumulation order and rounding follow
 the reference) and every multi-operator network case.
 
@@ -96,18 +104,18 @@ Environment variables:
 
 | Variable | Effect |
 |---|---|
-| `TOSA_CONFORMANCE_DIR` | Run the cases below these directories (a list separated like `PATH`) instead of `tests/conformance` and `tests/networks`. Test names are relative to each directory. |
+| `TOSA_CONFORMANCE_DIR` | Run the cases below these directories (a list separated like `PATH`) instead of the checked-in `conformance` and `networks` directories. Test names are relative to each directory. |
 | `TOSA_CONFORMANCE_STRICT` | Require bit-exact results for every operator. |
 | `TOSA_CONFORMANCE_VERBOSE` | Print the largest deviation of every inexact output, and the error message for every rejected negative case. |
 
 Setting a variable for one command:
 
 ```sh
-TOSA_CONFORMANCE_VERBOSE=1 cargo test --test conformance   # bash, zsh
+TOSA_CONFORMANCE_VERBOSE=1 cargo test -p tosa-interp --test conformance   # bash, zsh
 ```
 
 ```powershell
-$env:TOSA_CONFORMANCE_VERBOSE = "1"; cargo test --test conformance
+$env:TOSA_CONFORMANCE_VERBOSE = "1"; cargo test -p tosa-interp --test conformance
 ```
 
 ## Generating test cases
@@ -134,14 +142,14 @@ graph LR;
   G[tosa_verif_build_tests] --> T[graphs and inputs];
   T --> S[sample per type signature and ERROR_IF kind];
   S --> R[tosa_reference_model];
-  R --> K[tests/conformance/op];
+  R --> K[crates/tosa-interp/tests/conformance/op];
   K --> H[cargo test --test conformance];
 ```
 
 `scripts/gen_conformance.py --op <op>` builds an operator's suite: the
 generator's cases are sampled, each sampled case runs through the reference
 model, and the cases it accepts are copied, with its outputs, into
-`tests/conformance/<op>/`.
+`crates/tosa-interp/tests/conformance/<op>/`.
 
 - **Sampling.** The generator produces thousands of cases per operator. The
   checked-in suite keeps up to three positive cases per type signature and
@@ -150,7 +158,7 @@ model, and the cases it accepts are copied, with its outputs, into
 - **Full suites.** `--full` keeps every case and writes to the untracked
   `target/conformance-full`. All 90 operators' full suites, about 77,000
   cases, take roughly two hours to generate on 20 cores. Run them with
-  `TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --release --test conformance`.
+  `TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --release -p tosa-interp --test conformance`.
 - **Caching.** Raw generator output is cached in
   `target/conformance-gen/<op>`, so re-sampling does not rerun the generator
   (`--regenerate` forces it).
@@ -167,7 +175,7 @@ including the coverage estimate.
 
 ### Network cases
 
-`tests/networks/` holds multi-operator graphs:
+`crates/tosa-interp/tests/networks/` holds multi-operator graphs:
 
 | Case | Operators | Origin |
 |---|---|---|
@@ -179,7 +187,7 @@ including the coverage estimate.
 
 The graphs and inputs are fixed; `uv run scripts/refresh_networks.py`
 regenerates the expected outputs with the reference model (for example after
-upgrading it). To add a case, create `tests/networks/<name>/` with the graph,
+upgrading it). To add a case, create `crates/tosa-interp/tests/networks/<name>/` with the graph,
 one `.npy` per input and a `desc.json` naming them, then run the script.
 
 ## Cross-platform behaviour
@@ -204,7 +212,7 @@ request:
 | Job | Runs on | Steps |
 |---|---|---|
 | Format and lint | Ubuntu | `cargo fmt --check`, `cargo clippy --all-targets -D warnings` |
-| Test | Ubuntu, Windows, macOS | `cargo test --all-targets` (debug, so integer overflow checks are on) and `cargo test --doc` |
+| Test | Ubuntu, Windows, macOS | `cargo test --all-targets` across the workspace (debug, so integer overflow checks are on) and `cargo test --doc` |
 | Minimum supported Rust version | Ubuntu | `cargo check --all-targets` with Rust 1.88 (`rust-version` in `Cargo.toml`) |
 | Generated code is up to date | Ubuntu | `cargo xtask codegen --check`, clippy on the xtask |
 
@@ -228,7 +236,7 @@ upgraded together (see below).
 
 ## FlatBuffers bindings
 
-`src/generated/tosa_generated.rs` is generated from `schema/tosa.fbs` by
+`crates/tosa-ir/src/generated/tosa_generated.rs` is generated from `crates/tosa-ir/schema/tosa.fbs` by
 `flatc` and checked in, so building and testing need no `flatc`. After
 changing the schema:
 

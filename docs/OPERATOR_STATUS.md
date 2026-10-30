@@ -43,7 +43,7 @@ graph through tosa-interp and compares the results.
 2. The reference model runs each test in its native-precision mode and its
    outputs are stored as the expected results. Tests it reports as
    unpredictable are dropped.
-3. `cargo test --test conformance` runs every case through tosa-interp.
+3. `cargo test -p tosa-interp --test conformance` runs every case through tosa-interp.
    Positive outputs must match **bit for bit** (any NaN equals any NaN).
    Negative cases must be rejected with an error.
 4. The only tolerance is for ERF, LOG, POW, SIN, COS, FFT2D and RFFT2D. The
@@ -57,7 +57,7 @@ graph through tosa-interp and compares the results.
    require bit-exact results everywhere.
 
 The generator emits thousands of cases per operator, so the checked-in suite
-(`tests/conformance`) is a sample: up to three positive cases per type
+(`crates/tosa-interp/tests/conformance`) is a sample: up to three positive cases per type
 signature (and per special-value variant; one for MATMUL and MATMUL_T, two
 for RESIZE, whose cases are large), and up to three ERROR_IF cases per error
 kind, drawn from different type signatures. The complete suites can be built
@@ -65,7 +65,7 @@ and run locally:
 
 ```sh
 uv run scripts/gen_conformance.py --full --op conv2d
-TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --release --test conformance
+TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --release -p tosa-interp --test conformance
 ```
 
 (In PowerShell, set the variable with
@@ -231,7 +231,7 @@ Types are listed as `input -> output` (with accumulator where relevant).
 | LOGICAL_AND/OR/XOR/NOT | bool | |
 | ABS, NEGATE | i32/i64 and floats (ABS); i8-i64 with zero points and floats (NEGATE) | |
 | CEIL, FLOOR, CLZ | Floats; i32/i64 for CLZ | |
-| EXP | FP16, BF16, FP32 | Bit-exact port of the musl `expf` the reference bundles (`ops/math.rs`). |
+| EXP | FP16, BF16, FP32 | Bit-exact port of the musl `expf` the reference bundles (`crates/tosa-interp/src/ops/math.rs`). |
 | LOG, SIN, COS | FP16, BF16, FP32 | `libm` crate `logf`/`sinf`/`cosf`; the reference uses the platform C library. Within 1 ULP of the reference on Windows and Linux (2 accepted). |
 | RECIPROCAL, RSQRT | FP16, BF16, FP32 | Division in double precision, narrowed through FP32. |
 | ERF | FP16, BF16, FP32 | `libm` double-precision `erf` rounded once; within 2 ULPs of the reference (ULP bound 5). |
@@ -261,6 +261,7 @@ Types are listed as `input -> output` (with accumulator where relevant).
 |---|---|---|
 | CONST, IDENTITY | All types | |
 | COND_IF, WHILE_LOOP | All types | Sub-graph signatures are checked against the operator. WHILE_LOOP iterates on private copies of its inputs. |
+| VARIABLE, VARIABLE_READ, VARIABLE_WRITE | All types | Variables persist across runs of an `Interpreter`; operators on the same variable run in program order. Verified by the interpreter tests, not the conformance suite (see below). |
 | CONST_SHAPE, DIM, ADD/SUB/MUL/MAX/MIN_SHAPE, DIV_CEIL/DIV_FLOOR/MOD_SHAPE, EXP2/LOG2_CEIL/LOG2_FLOOR_SHAPE, CONCAT_SHAPE, SLICE_SHAPE, ASSERT_EQUAL_SHAPE | SHAPE | DIV_FLOOR_SHAPE truncates towards zero and DIV_CEIL_SHAPE adds one to the truncated quotient on a remainder, matching the reference. |
 
 ## Not implemented
@@ -268,7 +269,7 @@ Types are listed as `input -> output` (with accumulator where relevant).
 | Operator | Reason |
 |---|---|
 | MATMUL_T_BLOCK_SCALED, CAST_FROM_BLOCK_SCALED, CAST_TO_BLOCK_SCALED, CONV2D_BLOCK_SCALED, RESHAPE_BLOCK_SCALED, ROW_GATHER_BLOCK_SCALED, and MX variants of other operators | Require the MX formats (MXINT8, FP4, FP6, FP8 E8M0 scales); out of scope for now. |
-| VARIABLE, VARIABLE_READ, VARIABLE_WRITE | Implemented, but the tosa-tools generator has no tests for them. |
+| VARIABLE, VARIABLE_READ, VARIABLE_WRITE (conformance) | Implemented and covered by `crates/tosa-interp/tests/interpreter.rs`, but the tosa-tools generator has no cases for them, so they are not checked against the reference model. |
 | ARGMIN | In the schema but not yet in the reference model or generator. |
 | CUSTOM | Implementation defined by definition. |
 
@@ -301,6 +302,6 @@ From the repository root on any OS, with [uv](https://docs.astral.sh/uv/)
 
 ```sh
 uv run scripts/gen_conformance.py --op <operator>
-cargo test --release --test conformance
+cargo test --release -p tosa-interp --test conformance
 uv run scripts/conformance_report.py
 ```

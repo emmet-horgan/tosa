@@ -1,0 +1,12 @@
+[package]
+name = "tosa-convert"
+description = "Framework for lowering other model formats to TOSA graphs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+tosa-ir.workspace = true
+tosa-interp.workspace = true
+thiserror.workspace = true

@@ -5,7 +5,7 @@
 # ///
 """Summarise conformance coverage per operator for docs/OPERATOR_STATUS.md.
 
-For every operator with a suite under ``tests/conformance`` this reports:
+For every operator with a suite under ``crates/tosa-interp/tests/conformance`` this reports:
 
 * checked-in positive / ERROR_IF cases and how many pass;
 * the size and pass count of the full suite in ``target/conformance-full``
@@ -90,7 +90,7 @@ def run_suite(root: Path) -> set[str] | None:
         return None
     env = dict(os.environ, TOSA_CONFORMANCE_DIR=str(root))
     proc = subprocess.run(
-        ["cargo", "test", "--release", "--test", "conformance", "--", "-q"],
+        ["cargo", "test", "--release", "-p", "tosa-interp", "--test", "conformance", "--", "-q"],
         cwd=REPO, env=env, capture_output=True, text=True,
     )
     out = proc.stdout + proc.stderr

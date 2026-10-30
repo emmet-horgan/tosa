@@ -50,7 +50,7 @@ jobs:
       - name: Refresh network reference outputs
         run: |
           uv run scripts/refresh_networks.py
-          git diff --exit-code --stat -- tests/networks
+          git diff --exit-code --stat -- crates/tosa-interp/tests/networks
 
       - name: Generate conformance cases
         env:
@@ -64,7 +64,7 @@ jobs:
         env:
           TOSA_CONFORMANCE_DIR: target/ci-conformance
           TOSA_CONFORMANCE_VERBOSE: "1"
-        run: cargo test --release --test conformance
+        run: cargo test --release -p tosa-interp --test conformance
 
       - name: Upload generated cases
         if: failure()

@@ -13,7 +13,7 @@ For each requested operator this script:
    *native-precision* mode (no ``--precise_mode``), so the recorded outputs are
    exactly what the reference implementation produces and can be compared bit
    for bit.
-3. Copies each test case into ``tests/conformance/<op>/<test>/``.
+3. Copies each test case into ``crates/tosa-interp/tests/conformance/<op>/<test>/``.
 
 Tests the reference model reports as UNPREDICTABLE are dropped, as are
 positive tests it fails to run. MX (microscaling) extension tests are not
@@ -53,7 +53,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = REPO / "tests" / "conformance"
+DEFAULT_OUT = REPO / "crates" / "tosa-interp" / "tests" / "conformance"
 # Untracked location for complete (unsampled) suites; run them with
 # TOSA_CONFORMANCE_DIR=target/conformance-full cargo test --test conformance
 FULL_OUT = REPO / "target" / "conformance-full"

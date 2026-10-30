@@ -7,4 +7,4 @@
 *.tosa binary
 
 # Checked-in flatc output; regenerate with `cargo xtask codegen`.
-src/generated/*.rs linguist-generated=true
+crates/tosa-ir/src/generated/*.rs linguist-generated=true
