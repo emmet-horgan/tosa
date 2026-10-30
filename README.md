@@ -189,16 +189,18 @@ unchanged.
 
 `tosa-convert` lowers other formats to TOSA through per-format frontends and
 per-operator lowerings, with shared quantization and layout helpers and
-cleanup passes. The TFLite frontend converts float, int8 and uint8 models;
-MobileNet v1 and v2 and EfficientNet-Lite0 convert and run bit-exact
-against TFLite's reference kernels in their quantized forms and within 2e-9
-in float. The ONNX frontend converts float models (ONNX model zoo
-MobileNetV2, SqueezeNet 1.1 and ResNet-18 agree with onnxruntime to float32
-rounding) with a hand-written protobuf reader, so no protobuf toolchain is
-needed. All of them are benchmarked. ExecuTorch `.pte` and quantized ONNX
-are next. See [docs/CONVERSION.md](docs/CONVERSION.md)
-for the design, the operator list, how models are verified and how to add a
-frontend.
+cleanup passes. The TFLite frontend converts float, int8 and uint8 models
+(about 80 builtin operators): MobileNet v1, v2 and v3, EfficientNet-Lite,
+DeepLab v3, SSD MobileNet v2 and BlazeFace convert and run bit-exact
+against TFLite's reference kernels in their quantized forms and to float32
+rounding in float. The ONNX frontend converts float and quantized (QLinear)
+models with a hand-written protobuf reader, so no protobuf toolchain is
+needed: MobileNetV2, ResNet, DenseNet, ShuffleNet, Inception, SqueezeNet,
+EfficientNet-Lite4, super-resolution and style-transfer networks agree with
+onnxruntime to float32 rounding, and the int8 MobileNetV2 and ResNet-50 are
+bit-exact. All 25 models are benchmarked. ExecuTorch `.pte` is next. See
+[docs/CONVERSION.md](docs/CONVERSION.md) for the design, the operator list,
+how models are verified and how to add a frontend.
 
 ```sh
 tosa convert model.tflite -o model.tosa

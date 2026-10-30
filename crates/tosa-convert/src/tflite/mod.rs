@@ -22,6 +22,7 @@ pub(crate) mod generated {
 
 pub mod loader;
 pub mod lowerings;
+mod shapes;
 
 pub(crate) use generated::tflite as fb;
 

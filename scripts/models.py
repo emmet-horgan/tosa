@@ -64,6 +64,12 @@ class ModelSpec:
     note: str = ""
     max_int_diff: int = 0
     """Largest accepted difference from LiteRT for integer outputs (see docs/CONVERSION.md)."""
+    max_abs: float | None = None
+    """Float tolerance override (absolute), for arithmetic TOSA cannot reproduce exactly."""
+    rel: float | None = None
+    """Float tolerance override (relative to |expected|)."""
+    tolerance_note: str = ""
+    """Why the override is needed."""
 
 
 TF_MODELS = "https://storage.googleapis.com/download.tensorflow.org/models"
@@ -117,6 +123,48 @@ MODELS = [
         note="int8 per-channel quantized with uint8 inputs and outputs (MediaPipe)",
     ),
     ModelSpec(
+        "mobilenet_v3_small",
+        f"{MEDIAPIPE.replace('image_classifier', 'image_embedder')}/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite",
+        "bbbb4c51a55a53905af1daec995ca1aae355046f8839bb8c9f5ce9271394bc40",
+        note="float32 embedder with HARD_SWISH (MediaPipe)",
+        max_abs=2e-5,
+        tolerance_note="HARD_SWISH divides by 6 in TFLite; TOSA has no float divide, so x*(1/6) differs by one ulp",
+    ),
+    ModelSpec(
+        "mobilenet_v3_large",
+        f"{MEDIAPIPE.replace('image_classifier', 'image_embedder')}/mobilenet_v3_large/float32/1/mobilenet_v3_large.tflite",
+        "11af3c560dfeed7737cb4c03c23bf52a8403020784192d4dea0b74862a12828d",
+        note="float32 embedder with HARD_SWISH (MediaPipe)",
+        max_abs=2e-5,
+        tolerance_note="HARD_SWISH divides by 6 in TFLite; TOSA has no float divide, so x*(1/6) differs by one ulp",
+    ),
+    ModelSpec(
+        "deeplab_v3",
+        "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite",
+        "ff36e24d40547fe9e645e2f4e8745d1876d6e38b332d39a82f0bf0f5d1d561b3",
+        note="float32 segmentation with RESIZE_BILINEAR (MediaPipe)",
+        max_abs=1e-5,
+        tolerance_note="TFLite computes bilinear source coordinates in float32; TOSA RESIZE uses exact rationals, so weights differ by an ulp",
+    ),
+    ModelSpec(
+        "efficientnet_lite2_int8",
+        f"{MEDIAPIPE}/efficientnet_lite2/int8/1/efficientnet_lite2.tflite",
+        "7fc3a7dbc1cd2833b162a54577afb47ab531d9c4b799ef11d90a4c56fe4ed5ad",
+        note="int8 per-channel quantized, uint8 inputs and outputs (MediaPipe)",
+    ),
+    ModelSpec(
+        "ssd_mobilenet_v2",
+        "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float32/latest/ssd_mobilenet_v2.tflite",
+        "b8ccb1a25d45455ba52e85f26531948e1cb75efeb94c7c3d456d54fd4d6fbdd2",
+        note="float32 detector backbone and heads with RESIZE_NEAREST_NEIGHBOR (MediaPipe)",
+    ),
+    ModelSpec(
+        "blaze_face_short_range",
+        "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+        "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f",
+        note="float16 weights dequantized at load (MediaPipe)",
+    ),
+    ModelSpec(
         "onnx_mobilenetv2-12",
         f"{ONNX_ZOO}/mobilenet/model/mobilenetv2-12.onnx",
         "c0c3f76d93fa3fd6580652a45618618a220fced18babf65774ed169de0432ad5",
@@ -133,6 +181,68 @@ MODELS = [
         f"{ONNX_ZOO}/resnet/model/resnet18-v1-7.onnx",
         "4e8f8653e7a2222b3904cc3fe8e304cd8b339ce1d05fd24688162f86fb6df52c",
         note="ONNX float32 (ONNX model zoo, opset 7)",
+    ),
+    ModelSpec(
+        "onnx_densenet-12",
+        f"{ONNX_ZOO}/densenet-121/model/densenet-12.onnx",
+        "0294e7e88e5b3360de9b0fdc321baf9e6ef18b7f058c4536caae3b9f18ed9ed5",
+        note="ONNX float32, dense Concat blocks",
+    ),
+    ModelSpec(
+        "onnx_shufflenet-v2-12",
+        f"{ONNX_ZOO}/shufflenet/model/shufflenet-v2-12.onnx",
+        "ea69821b4dd374ae2f33f9710dd1229ac263d0ee5b5a46ca3521f6483e1ba035",
+        note="ONNX float32 with Split and channel shuffles",
+    ),
+    ModelSpec(
+        "onnx_efficientnet-lite4-11",
+        f"{ONNX_ZOO}/efficientnet-lite4/model/efficientnet-lite4-11.onnx",
+        "d111689907c06eea7c82e4833ddef758da6453b9d4cf60b7e99ca05c7cbd9c12",
+        note="ONNX float32, NHWC input with an internal Transpose",
+    ),
+    ModelSpec(
+        "onnx_inception-v1-12",
+        f"{ONNX_ZOO}/inception_and_googlenet/inception_v1/model/inception-v1-12.onnx",
+        "814b31a6316873bd03d2d808415ce1f40a7bf48ad88eab5ecc3cdc8dc6cf38ec",
+        note="ONNX float32 with LRN",
+    ),
+    ModelSpec(
+        "onnx_mnist-12",
+        f"{ONNX_ZOO}/mnist/model/mnist-12.onnx",
+        "5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd",
+        note="ONNX float32, tiny",
+    ),
+    ModelSpec(
+        "onnx_super-resolution-10",
+        "https://github.com/onnx/models/raw/main/validated/vision/super_resolution/sub_pixel_cnn_2016/model/super-resolution-10.onnx",
+        "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e",
+        note="ONNX float32 with a pixel-shuffle Reshape/Transpose",
+    ),
+    ModelSpec(
+        "onnx_emotion-ferplus-8",
+        "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx",
+        "a2a2ba6a335a3b29c21acb6272f962bd3d47f84952aaffa03b60986e04efa61c",
+        note="ONNX float32 (opset 8)",
+    ),
+    ModelSpec(
+        "onnx_mobilenetv2-12-int8",
+        f"{ONNX_ZOO}/mobilenet/model/mobilenetv2-12-int8.onnx",
+        "cc028fe6cae7bc11a4ff53cfc9b79c920e8be65ce33a904ec3e2a8f66d77f95f",
+        note="ONNX uint8 QLinear operators (QLinearConv, QLinearAdd, ...)",
+    ),
+    ModelSpec(
+        "onnx_resnet50-v1-12-int8",
+        f"{ONNX_ZOO}/resnet/model/resnet50-v1-12-int8.onnx",
+        "c234f30975989788b4405f25253275aae247ab6dbdd34aaa69ab0a59ff76f6d0",
+        note="ONNX uint8 QLinear operators",
+    ),
+    ModelSpec(
+        "onnx_candy-9",
+        "https://github.com/onnx/models/raw/main/validated/vision/style_transfer/fast_neural_style/model/candy-9.onnx",
+        "9d11a3529d1e547da6ae07201d93484dbab2ec0a3614535752c8f40f0fe2968a",
+        note="ONNX float32 with InstanceNormalization and Upsample",
+        max_abs=2e-3,
+        tolerance_note="InstanceNormalization amplifies float32 accumulation-order differences; outputs span 0..255",
     ),
 ]
 
@@ -199,11 +309,12 @@ def seeded_input(detail: dict, rng: np.random.Generator) -> np.ndarray:
     sys.exit(f"error: no input generator for dtype {dtype}")
 
 
-def record_outputs(model: Path, case: Path, seed: int, meta: dict) -> dict:
+def record_outputs(model: Path, case: Path, seed: int, meta: dict, tolerance: dict | None = None) -> dict:
     """Run the model's native runtime on seeded inputs and write the case files.
-    Returns the desc."""
+    Returns the desc. ``tolerance`` (``{"max_abs", "rel"}``) overrides the
+    test harness's float bounds for this case."""
     if model.suffix == ".onnx":
-        return record_onnx_outputs(model, case, seed, meta)
+        return record_onnx_outputs(model, case, seed, meta, tolerance)
     from ai_edge_litert.interpreter import Interpreter, OpResolverType
 
     # TFLite's *reference* kernels are the oracle: they define the quantized
@@ -221,6 +332,8 @@ def record_outputs(model: Path, case: Path, seed: int, meta: dict) -> dict:
         "expected_failure": False,
         "meta": meta,
     }
+    if tolerance:
+        desc["tolerance"] = tolerance
     for i, d in enumerate(interp.get_input_details()):
         value = seeded_input(d, rng)
         interp.set_tensor(d["index"], value)
@@ -243,7 +356,7 @@ ONNX_NP = {"tensor(float)": np.float32, "tensor(int64)": np.int64, "tensor(int32
            "tensor(uint8)": np.uint8, "tensor(int8)": np.int8, "tensor(bool)": np.bool_, "tensor(float16)": np.float16}
 
 
-def record_onnx_outputs(model: Path, case: Path, seed: int, meta: dict) -> dict:
+def record_onnx_outputs(model: Path, case: Path, seed: int, meta: dict, tolerance: dict | None = None) -> dict:
     """As ``record_outputs`` for ONNX, with onnxruntime's CPU provider. Symbolic
     input dimensions become 1, as the converter assumes."""
     import onnxruntime as ort
@@ -259,6 +372,8 @@ def record_onnx_outputs(model: Path, case: Path, seed: int, meta: dict) -> dict:
         "expected_failure": False,
         "meta": meta,
     }
+    if tolerance:
+        desc["tolerance"] = tolerance
     feeds = {}
     for i, inp in enumerate(session.get_inputs()):
         shape = [d if isinstance(d, int) else 1 for d in inp.shape]
@@ -327,8 +442,12 @@ def verify(case: Path, desc: dict, max_int_diff: int) -> bool:
             rel = diff / np.maximum(np.abs(expected.astype(np.float64)), 1e-30)
             print(f"{case.name}: {name}: max abs difference vs native runtime {diff.max():.3e}, rel {rel.max():.3e} (reference model)")
             # onnxruntime accumulates in a blocked order (float32 rounding differences); LiteRT reference kernels match closely.
+            # A case's own ``tolerance`` (see ModelSpec.max_abs / rel) overrides either bound, as in the Rust harness.
             tol_abs, tol_rel = (1e-5, 1e-4) if model_file.endswith(".onnx") else (1e-6, 0.0)
-            ok &= bool(np.all((diff <= tol_abs) | (rel <= tol_rel)))
+            override = desc.get("tolerance") or {}
+            tol_abs = override.get("max_abs") if override.get("max_abs") is not None else tol_abs
+            tol_rel = override.get("rel") if override.get("rel") is not None else tol_rel
+            ok &= bool(np.all(diff <= tol_abs + tol_rel * np.abs(expected.astype(np.float64))))
         else:
             diff = np.abs(actual.astype(np.int64) - expected.astype(np.int64))
             print(f"{case.name}: {name}: max |diff| {diff.max()}, {np.mean(diff == 0) * 100:.1f}% exact (reference model)")
@@ -359,7 +478,11 @@ def main() -> None:
     for spec in specs:
         model = fetch(spec, args.out)
         meta = {"source_url": spec.url, "sha256": sha256(model), "note": spec.note, "seed": args.seed}
-        desc = record_outputs(model, args.out / spec.name, args.seed, meta)
+        tolerance = None
+        if spec.max_abs is not None or spec.rel is not None:
+            tolerance = {"max_abs": spec.max_abs, "rel": spec.rel}
+            meta["tolerance_note"] = spec.tolerance_note
+        desc = record_outputs(model, args.out / spec.name, args.seed, meta, tolerance)
         print(f"{spec.name}: {len(desc['ifm_name'])} input(s), {len(desc['ofm_name'])} output(s) recorded")
         if args.verify and not verify(args.out / spec.name, desc, spec.max_int_diff):
             failed.append(spec.name)

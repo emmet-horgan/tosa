@@ -1,0 +1,47 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output_transpose",
+  "output_strided",
+  "output_pack",
+  "output_splitv",
+  "output_expand",
+  "output_d2s",
+  "output_s2d",
+  "output_bilinear",
+  "output_nearest",
+  "output_bilinear_from_1x1",
+  "output_tconv",
+  "output_matmul"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy",
+  "ref-output-2.npy",
+  "ref-output-3.npy",
+  "ref-output-4.npy",
+  "ref-output-5.npy",
+  "ref-output-6.npy",
+  "ref-output-7.npy",
+  "ref-output-8.npy",
+  "ref-output-9.npy",
+  "ref-output-10.npy",
+  "ref-output-11.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "Float data-movement operators: TRANSPOSE, SLICE, STRIDED_SLICE (shrink axis),\n    SPLIT, SPLIT_V, PACK, UNPACK, TILE, GATHER, EXPAND_DIMS, DEPTH_TO_SPACE,\n    SPACE_TO_DEPTH, RESIZE_BILINEAR (half-pixel centres, and from a 1x1 map),\n    RESIZE_NEAREST_NEIGHBOR, TRANSPOSE_CONV (SAME, stride 2) and BATCH_MATMUL."
+ },
+ "tolerance": {
+  "max_abs": 1e-06,
+  "rel": 2e-06
+ }
+}

@@ -1,0 +1,33 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output_nearest",
+  "maximum",
+  "output_gather",
+  "output_d2s",
+  "output_select",
+  "output_pad",
+  "output_tconv"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy",
+  "ref-output-2.npy",
+  "ref-output-3.npy",
+  "ref-output-4.npy",
+  "ref-output-5.npy",
+  "ref-output-6.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "uint8 data movement in the quantized domain: RESIZE_NEAREST_NEIGHBOR,\n    TRANSPOSE, STRIDED_SLICE, SPLIT, PACK, UNPACK, TILE, GATHER, DEPTH_TO_SPACE,\n    MAXIMUM, REDUCE_MAX, GREATER + SELECT_V2, MEAN, PAD and a per-tensor\n    TRANSPOSE_CONV; every operator is bit-exact against TFLite."
+ }
+}

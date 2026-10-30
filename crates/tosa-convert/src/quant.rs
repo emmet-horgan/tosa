@@ -214,3 +214,201 @@ mod tests {
         assert_eq!(scale16(0.75).unwrap(), ScaleParams { multiplier: 3 << 13, shift: 15 });
     }
 }
+
+// ---------------------------------------------------------------------------
+// Exact float-to-integer quantization
+// ---------------------------------------------------------------------------
+
+/// How a quotient exactly half way between two integers is rounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ties {
+    /// To the even neighbour (onnxruntime's `QuantizeLinear`, `nearbyint`).
+    Even,
+    /// Away from zero (TFLite's `QUANTIZE`, `std::round`).
+    AwayFromZero,
+}
+
+/// Emit `round(x / scale)` as INT32, with the rounding of the *exact*
+/// quotient, for FP32 `x` and a positive constant `scale`.
+///
+/// Reference runtimes divide by the scale; TOSA has no float division, and
+/// `x * (1 / scale)` differs from the correctly rounded quotient by an ulp,
+/// which changes the rounded integer when the quotient is within an ulp of
+/// a half-integer boundary. The emitted graph therefore computes
+/// `r = x * (1 / scale)`, rounds it to the candidate `k`, and decides
+/// exactly whether `x / scale` lies beyond the boundary `b = k ± 0.5` on
+/// `r`'s side by evaluating the sign of `x - b * scale` with Dekker's
+/// error-free product (Veltkamp splitting), all in FP32 operators. Ties
+/// (`x == b * scale` exactly) follow `ties`.
+pub fn quantize_round_exact(
+    ctx: &mut LowerCtx<'_>,
+    x: &TensorRef,
+    scale: f32,
+    ties: Ties,
+    hint: &str,
+) -> Result<TensorRef> {
+    if !(scale > 0.0 && scale.is_finite()) {
+        return ctx.fail(format!("quantization scale {scale} must be positive and finite"));
+    }
+    let shape = x.shape.clone();
+    let rank = shape.len();
+    let f32c = |ctx: &mut LowerCtx<'_>, v: f32, name: &str| -> Result<TensorRef> {
+        Ok(ctx.block.constant(&format!("{hint}_{name}"), &vec![1; rank], TensorData::F32(vec![v]))?)
+    };
+    let i32c = |ctx: &mut LowerCtx<'_>, v: i32, name: &str| -> Result<TensorRef> {
+        Ok(ctx.block.constant(&format!("{hint}_{name}"), &vec![1; rank], TensorData::I32(vec![v]))?)
+    };
+    let shift = ctx.scalar(TensorData::I8(vec![0]), &format!("{hint}_shift"))?;
+    let mul = |ctx: &mut LowerCtx<'_>, a: &TensorRef, b: &TensorRef, name: &str| -> TensorRef {
+        ctx.emit_temp(Op::Mul, OpAttribute::None, &[a, b, &shift], DType::F32, &shape, &format!("{hint}_{name}"))
+    };
+    let add = |ctx: &mut LowerCtx<'_>, a: &TensorRef, b: &TensorRef, name: &str| -> TensorRef {
+        ctx.emit_temp(Op::Add, OpAttribute::None, &[a, b], DType::F32, &shape, &format!("{hint}_{name}"))
+    };
+    let sub = |ctx: &mut LowerCtx<'_>, a: &TensorRef, b: &TensorRef, name: &str| -> TensorRef {
+        ctx.emit_temp(Op::Sub, OpAttribute::None, &[a, b], DType::F32, &shape, &format!("{hint}_{name}"))
+    };
+    let cast = |ctx: &mut LowerCtx<'_>, a: &TensorRef, to: DType, name: &str| -> TensorRef {
+        ctx.emit_temp(
+            Op::Cast,
+            OpAttribute::Cast { input_unsigned: false },
+            &[a],
+            to,
+            &shape,
+            &format!("{hint}_{name}"),
+        )
+    };
+    let cmp = |ctx: &mut LowerCtx<'_>, op: Op, a: &TensorRef, b: &TensorRef, name: &str| -> TensorRef {
+        ctx.emit_temp(op, OpAttribute::None, &[a, b], DType::Bool, &shape, &format!("{hint}_{name}"))
+    };
+
+    // Candidate: k = round_half_even(x * (1 / scale)).
+    let inv = f32c(ctx, 1.0 / scale, "inv_scale")?;
+    let r = mul(ctx, x, &inv, "r");
+    let k = cast(ctx, &r, DType::I32, "k");
+    let kf = cast(ctx, &k, DType::F32, "kf");
+
+    // The boundary on r's side of k: b = k + sigma, sigma = +-0.5.
+    let zero = f32c(ctx, 0.0, "zero")?;
+    let half = f32c(ctx, 0.5, "half")?;
+    let neg_half = f32c(ctx, -0.5, "neg_half")?;
+    let above = cmp(ctx, Op::GreaterEqual, &r, &kf, "above");
+    let sigma = ctx.emit_temp(
+        Op::Select,
+        OpAttribute::None,
+        &[&above, &half, &neg_half],
+        DType::F32,
+        &shape,
+        &format!("{hint}_sigma"),
+    );
+    let b = add(ctx, &kf, &sigma, "b");
+
+    // Exact sign of x - b * scale. Veltkamp split of b (factor 2^12 + 1) and
+    // of the constant scale; Dekker's product error e = b * scale - p exactly.
+    let factor = f32c(ctx, 4097.0, "split_factor")?;
+    let c = mul(ctx, &b, &factor, "split_c");
+    let c_minus_b = sub(ctx, &c, &b, "split_cb");
+    let bh = sub(ctx, &c, &c_minus_b, "bh");
+    let bl = sub(ctx, &b, &bh, "bl");
+    let s_c = scale * 4097.0;
+    let sh_v = s_c - (s_c - scale);
+    let sl_v = scale - sh_v;
+    let s_t = f32c(ctx, scale, "scale")?;
+    let sh = f32c(ctx, sh_v, "scale_hi")?;
+    let sl = f32c(ctx, sl_v, "scale_lo")?;
+    let p = mul(ctx, &b, &s_t, "p");
+    let hh = mul(ctx, &bh, &sh, "hh");
+    let e1 = sub(ctx, &hh, &p, "e1");
+    let hl = mul(ctx, &bh, &sl, "hl");
+    let e2 = add(ctx, &e1, &hl, "e2");
+    let lh = mul(ctx, &bl, &sh, "lh");
+    let e3 = add(ctx, &e2, &lh, "e3");
+    let ll = mul(ctx, &bl, &sl, "ll");
+    let e = add(ctx, &e3, &ll, "e");
+    let d1 = sub(ctx, x, &p, "d1");
+    let d = sub(ctx, &d1, &e, "d");
+
+    // Crossed the boundary (in sigma's direction), or exactly on it.
+    let d_sigma = mul(ctx, &d, &sigma, "d_sigma");
+    let crossed = cmp(ctx, Op::Greater, &d_sigma, &zero, "crossed");
+    let tie = cmp(ctx, Op::Equal, &d, &zero, "tie");
+    let tie_moves = match ties {
+        Ties::Even => {
+            // From k to k + 2 sigma: move when k is odd.
+            let one = i32c(ctx, 1, "one_i32")?;
+            let low_bit = ctx.emit_temp(
+                Op::BitwiseAnd,
+                OpAttribute::None,
+                &[&k, &one],
+                DType::I32,
+                &shape,
+                &format!("{hint}_low_bit"),
+            );
+            cmp(ctx, Op::Equal, &low_bit, &one, "k_odd")
+        }
+        Ties::AwayFromZero => {
+            // Away from zero is in sigma's direction when b and sigma share a sign.
+            let b_sigma = mul(ctx, &b, &sigma, "b_sigma");
+            cmp(ctx, Op::Greater, &b_sigma, &zero, "away")
+        }
+    };
+    let tie_move = ctx.emit_temp(
+        Op::LogicalAnd,
+        OpAttribute::None,
+        &[&tie, &tie_moves],
+        DType::Bool,
+        &shape,
+        &format!("{hint}_tie_move"),
+    );
+    let moves = ctx.emit_temp(
+        Op::LogicalOr,
+        OpAttribute::None,
+        &[&crossed, &tie_move],
+        DType::Bool,
+        &shape,
+        &format!("{hint}_moves"),
+    );
+    let step = cast(ctx, &moves, DType::I32, "step");
+    let two = f32c(ctx, 2.0, "two")?;
+    let sigma2 = mul(ctx, &sigma, &two, "sigma2");
+    let direction = cast(ctx, &sigma2, DType::I32, "direction");
+    let delta = ctx.emit_temp(
+        Op::Mul,
+        OpAttribute::None,
+        &[&step, &direction, &shift],
+        DType::I32,
+        &shape,
+        &format!("{hint}_delta"),
+    );
+    Ok(ctx.emit_temp(Op::Add, OpAttribute::None, &[&k, &delta], DType::I32, &shape, hint))
+}
+
+/// `saturate(round(x / scale) + zero_point)` as INT32 in the range of
+/// `out_dtype` (INT8 or INT16), with the exact rounding of
+/// [`quantize_round_exact`].
+pub fn quantize_exact(
+    ctx: &mut LowerCtx<'_>,
+    x: &TensorRef,
+    scale: f32,
+    zero_point: i32,
+    out_dtype: DType,
+    ties: Ties,
+    hint: &str,
+) -> Result<TensorRef> {
+    let (lo, hi) = match out_dtype {
+        DType::I8 => (-128, 127),
+        DType::I16 => (-32768, 32767),
+        other => return ctx.fail(format!("cannot quantize to {other:?}")),
+    };
+    let shape = x.shape.clone();
+    let rank = shape.len();
+    let rounded = quantize_round_exact(ctx, x, scale, ties, &format!("{hint}_rounded"))?;
+    let zp = ctx.block.constant(&format!("{hint}_zp"), &vec![1; rank], TensorData::I32(vec![zero_point]))?;
+    let shifted =
+        ctx.emit_temp(Op::Add, OpAttribute::None, &[&rounded, &zp], DType::I32, &shape, &format!("{hint}_shifted"));
+    let attr = OpAttribute::NanPropagation { nan_mode: tosa_ir::NanMode::Propagate };
+    let hi_t = ctx.block.constant(&format!("{hint}_hi"), &vec![1; rank], TensorData::I32(vec![hi]))?;
+    let lo_t = ctx.block.constant(&format!("{hint}_lo"), &vec![1; rank], TensorData::I32(vec![lo]))?;
+    let m = ctx.emit_temp(Op::Minimum, attr.clone(), &[&shifted, &hi_t], DType::I32, &shape, &format!("{hint}_min"));
+    Ok(ctx.emit_temp(Op::Maximum, attr, &[&m, &lo_t], DType::I32, &shape, &format!("{hint}_saturated")))
+}

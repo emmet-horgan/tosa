@@ -22,6 +22,17 @@ pub struct Desc {
     pub ifm_file: Vec<String>,
     pub ofm_name: Vec<String>,
     pub ofm_file: Vec<String>,
+    /// Looser float bounds for models whose reference arithmetic TOSA cannot
+    /// reproduce bit for bit (recorded by `scripts/models.py`, with the
+    /// reason in `meta.tolerance_note`).
+    #[serde(default)]
+    pub tolerance: Option<ToleranceOverride>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct ToleranceOverride {
+    pub max_abs: Option<f64>,
+    pub rel: Option<f64>,
 }
 
 pub struct Case {
@@ -63,10 +74,14 @@ pub fn models_dir() -> PathBuf {
 }
 
 pub fn convert_case(case: &Case) -> Conversion {
+    try_convert_case(case).unwrap_or_else(|e| panic!("{}: {e}", case.name))
+}
+
+pub fn try_convert_case(case: &Case) -> Result<Conversion, String> {
     let set = default_frontends();
     let path = case.dir.join(&case.desc.model_file);
-    let frontend = set.select(None, &path, &case.model).unwrap_or_else(|e| panic!("{}: {e}", case.name));
-    convert(frontend, &case.model, &ConvertOptions::default()).unwrap_or_else(|e| panic!("{}: {e}", case.name))
+    let frontend = set.select(None, &path, &case.model).map_err(|e| e.to_string())?;
+    convert(frontend, &case.model, &ConvertOptions::default()).map_err(|e| e.to_string())
 }
 
 /// The frontend a case uses, by its model file's extension.
@@ -199,16 +214,36 @@ impl Tolerance {
 
     /// The tolerance for a case, by the frontend its model uses.
     pub fn for_case(case: &Case) -> Self {
-        if frontend_name(case) == "onnx" { Tolerance::onnxruntime() } else { Tolerance::default() }
+        let mut tol = if frontend_name(case) == "onnx" { Tolerance::onnxruntime() } else { Tolerance::default() };
+        if let Some(o) = &case.desc.tolerance {
+            if let Some(a) = o.max_abs {
+                tol.max_abs = a;
+            }
+            if let Some(r) = o.rel {
+                tol.rel = r;
+            }
+        }
+        tol
     }
 }
 
 /// Convert, run and compare one case; prints the deviations. Returns the
 /// failures as messages.
 pub fn check_case(case: &Case, tol: &Tolerance) -> Vec<String> {
-    let conversion = convert_case(case);
+    let conversion = match try_convert_case(case) {
+        Ok(c) => c,
+        Err(e) => return vec![format!("{}: conversion failed: {e}", case.name)],
+    };
     let graph = &conversion.graph;
-    let outputs = run(graph, inputs(case, graph));
+    let bytes = graph.to_flatbuffer().unwrap();
+    let mut interp = match Interpreter::from_flatbuffer(&bytes) {
+        Ok(i) => i,
+        Err(e) => return vec![format!("{}: converted graph rejected: {e}", case.name)],
+    };
+    let outputs = match interp.run(inputs(case, graph), &mut NoopHook) {
+        Ok(o) => o,
+        Err(e) => return vec![format!("{}: interpreter error: {e}", case.name)],
+    };
     let mut failures = Vec::new();
     for (name, file) in case.desc.ofm_name.iter().zip(&case.desc.ofm_file) {
         let Some(actual) = outputs.get(name) else {

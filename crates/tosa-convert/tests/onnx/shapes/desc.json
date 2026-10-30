@@ -1,0 +1,36 @@
+{
+ "onnx_file": "model.onnx",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "out_s2d",
+  "out_linear",
+  "out_nearest",
+  "out_align",
+  "out_from_1x1",
+  "out_pads",
+  "out_acts",
+  "out_reduce"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy",
+  "ref-output-2.npy",
+  "ref-output-3.npy",
+  "ref-output-4.npy",
+  "ref-output-5.npy",
+  "ref-output-6.npy",
+  "ref-output-7.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/onnx_testcases.py",
+  "seed": 11,
+  "description": "Data movement and the remaining float operators: Split (sizes input), Transpose,\n    Tile, Expand, DepthToSpace (DCR and CRD), SpaceToDepth, Resize (linear half-pixel,\n    nearest asymmetric/floor, align_corners, and from a 1x1 map), ConvTranspose\n    (stride 2, pads, output_padding), Pad (reflect, edge), Where with comparisons and\n    the logical operators, ArgMax, ReduceMax/Min/Sum/Prod, LogSoftmax, Sum and Mean\n    (n-ary), Sin, Cos, HardSigmoid, HardSwish, Softplus, Elu, PRelu, LRN and\n    InstanceNormalization.",
+  "opset": 14
+ }
+}

@@ -1,0 +1,35 @@
+{
+ "tflite_file": "model.tflite",
+ "ifm_name": [
+  "a",
+  "b"
+ ],
+ "ifm_file": [
+  "input-0.npy",
+  "input-1.npy"
+ ],
+ "ofm_name": [
+  "output_elementwise",
+  "output_reductions",
+  "output_prod",
+  "output_arg",
+  "output_select"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy",
+  "ref-output-1.npy",
+  "ref-output-2.npy",
+  "ref-output-3.npy",
+  "ref-output-4.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/tflite_testcases.py",
+  "seed": 7,
+  "description": "Float element-wise operators on two inputs: HARD_SWISH, PRELU, LEAKY_RELU,\n    GELU (exact and approximate), MAXIMUM, MINIMUM, EXP, LOG, SQRT, RSQRT, SIN, COS, FLOOR, NEG,\n    POW, DIV, SQUARED_DIFFERENCE, L2_NORMALIZATION, LOG_SOFTMAX; reductions\n    REDUCE_MAX/MIN, SUM, REDUCE_PROD, ARG_MAX/MIN with CAST; comparisons, the\n    logical operators and SELECT/SELECT_V2. Transcendental functions follow each\n    runtime's libm, so results agree to a few float32 ulps, not bit for bit."
+ },
+ "tolerance": {
+  "max_abs": 1e-06,
+  "rel": 4e-06
+ }
+}

@@ -1,8 +1,9 @@
 //! Parsing a `.tflite` flatbuffer into a [`SourceGraph`].
 //!
 //! Only the main (single) subgraph is supported. Tensors keep TFLite's
-//! names, shapes (`shape_signature` when present, so dynamic dimensions are
-//! `-1`), quantization parameters and constant buffers. Nodes carry the
+//! names, shapes (a dynamic graph input dimension becomes [`SYMBOLIC_DIM`];
+//! dynamic intermediate shapes are inferred by [`super::shapes`]),
+//! quantization parameters and constant buffers. Nodes carry the
 //! builtin operator's name (`CONV_2D`, ...) and the fields of its options
 //! table as attributes.
 //!
@@ -17,6 +18,10 @@ use tosa_ir::TensorData;
 use super::fb;
 use crate::error::{ConvertError, Result};
 use crate::source::{AttrValue, Attrs, Quantization, SourceDType, SourceGraph, SourceNode, SourceTensor, TensorId};
+
+/// Size substituted for a dynamic dimension of a graph input, such as an
+/// unknown batch size.
+pub const SYMBOLIC_DIM: i64 = 1;
 
 pub(super) fn err(reason: impl Into<String>) -> ConvertError {
     ConvertError::Frontend { format: "tflite".into(), reason: reason.into() }
@@ -154,6 +159,58 @@ fn attributes(op: &fb::Operator<'_>) -> Attrs {
         }
     } else if let Some(o) = op.builtin_options_as_leaky_relu_options() {
         a.insert("alpha".into(), AttrValue::Float(o.alpha() as f64));
+    } else if let Some(o) = op.builtin_options_as_resize_bilinear_options() {
+        a.insert("align_corners".into(), AttrValue::Bool(o.align_corners()));
+        a.insert("half_pixel_centers".into(), AttrValue::Bool(o.half_pixel_centers()));
+    } else if let Some(o) = op.builtin_options_as_resize_nearest_neighbor_options() {
+        a.insert("align_corners".into(), AttrValue::Bool(o.align_corners()));
+        a.insert("half_pixel_centers".into(), AttrValue::Bool(o.half_pixel_centers()));
+    } else if let Some(o) = op.builtin_options_as_transpose_conv_options() {
+        int("stride_h", o.stride_h() as i64);
+        int("stride_w", o.stride_w() as i64);
+        a.insert("padding".into(), AttrValue::Str(padding_name(o.padding()).into()));
+        a.insert(
+            "fused_activation_function".into(),
+            AttrValue::Str(activation_name(o.fused_activation_function()).into()),
+        );
+    } else if let Some(o) = op.builtin_options_as_strided_slice_options() {
+        int("begin_mask", o.begin_mask() as i64);
+        int("end_mask", o.end_mask() as i64);
+        int("ellipsis_mask", o.ellipsis_mask() as i64);
+        int("new_axis_mask", o.new_axis_mask() as i64);
+        int("shrink_axis_mask", o.shrink_axis_mask() as i64);
+    } else if let Some(o) = op.builtin_options_as_split_options() {
+        int("num_splits", o.num_splits() as i64);
+    } else if let Some(o) = op.builtin_options_as_split_voptions() {
+        int("num_splits", o.num_splits() as i64);
+    } else if let Some(o) = op.builtin_options_as_depth_to_space_options() {
+        int("block_size", o.block_size() as i64);
+    } else if let Some(o) = op.builtin_options_as_space_to_depth_options() {
+        int("block_size", o.block_size() as i64);
+    } else if let Some(o) = op.builtin_options_as_pack_options() {
+        int("values_count", o.values_count() as i64);
+        int("axis", o.axis() as i64);
+    } else if let Some(o) = op.builtin_options_as_unpack_options() {
+        int("num", o.num() as i64);
+        int("axis", o.axis() as i64);
+    } else if let Some(o) = op.builtin_options_as_gather_options() {
+        int("axis", o.axis() as i64);
+        int("batch_dims", o.batch_dims() as i64);
+    } else if let Some(o) = op.builtin_options_as_batch_mat_mul_options() {
+        a.insert("adj_x".into(), AttrValue::Bool(o.adj_x()));
+        a.insert("adj_y".into(), AttrValue::Bool(o.adj_y()));
+    } else if let Some(o) = op.builtin_options_as_div_options() {
+        a.insert(
+            "fused_activation_function".into(),
+            AttrValue::Str(activation_name(o.fused_activation_function()).into()),
+        );
+    } else if let Some(o) = op.builtin_options_as_l2_norm_options() {
+        a.insert(
+            "fused_activation_function".into(),
+            AttrValue::Str(activation_name(o.fused_activation_function()).into()),
+        );
+    } else if let Some(o) = op.builtin_options_as_gelu_options() {
+        a.insert("approximate".into(), AttrValue::Bool(o.approximate()));
     }
     a
 }
@@ -169,6 +226,8 @@ pub fn load(bytes: &[u8]) -> Result<SourceGraph> {
     let codes = model.operator_codes().ok_or_else(|| err("the model has no operator codes"))?;
 
     let mut graph = SourceGraph::new(sg.name().filter(|n| !n.is_empty()).unwrap_or("main"));
+    let graph_inputs: std::collections::HashSet<usize> =
+        sg.inputs().map(|v| v.iter().map(|x| x as usize).collect()).unwrap_or_default();
     let mut names = std::collections::HashSet::new();
     for (i, t) in sg.tensors().into_iter().flatten().enumerate() {
         let mut name = t.name().filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| format!("tensor_{i}"));
@@ -176,12 +235,24 @@ pub fn load(bytes: &[u8]) -> Result<SourceGraph> {
             name = format!("{name}_{i}");
         }
         let dtype = dtype_of(t.type_());
-        let shape: Vec<i32> = t.shape().map(|s| s.iter().collect()).unwrap_or_default();
-        let signature: Option<Vec<i32>> = t.shape_signature().map(|s| s.iter().collect());
-        let shape: Vec<i64> = match signature {
-            Some(sig) if sig.len() == shape.len() => sig.iter().map(|&d| d as i64).collect(),
-            _ => shape.iter().map(|&d| d as i64).collect(),
+        // `shape_signature` marks dynamic dimensions with -1; `shape` then
+        // holds whatever the converter allocated, which for intermediate
+        // tensors is not reliable. Dynamic shapes are inferred afterwards
+        // (see [`super::shapes`]); a dynamic graph input dimension (an
+        // unknown batch) is taken as [`SYMBOLIC_DIM`].
+        let concrete: Vec<i64> = t.shape().map(|s| s.iter().map(|d| d as i64).collect()).unwrap_or_default();
+        let signature: Option<Vec<i64>> = t.shape_signature().map(|s| s.iter().map(|d| d as i64).collect());
+        let mut shape: Vec<i64> = match signature {
+            Some(sig) if sig.len() == concrete.len() => sig,
+            _ => concrete,
         };
+        if graph_inputs.contains(&i) {
+            for d in &mut shape {
+                if *d < 0 {
+                    *d = SYMBOLIC_DIM;
+                }
+            }
+        }
         let quant = t.quantization().and_then(|q| {
             let scales: Vec<f64> = q.scale()?.iter().map(|s| s as f64).collect();
             if scales.is_empty() {
@@ -247,5 +318,6 @@ pub fn load(bytes: &[u8]) -> Result<SourceGraph> {
             return Err(err(format!("graph input/output tensor {id} does not exist")));
         }
     }
+    super::shapes::infer_shapes(&mut graph)?;
     Ok(graph)
 }

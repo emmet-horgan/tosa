@@ -1,0 +1,22 @@
+{
+ "onnx_file": "model.onnx",
+ "ifm_name": [
+  "input"
+ ],
+ "ifm_file": [
+  "input-0.npy"
+ ],
+ "ofm_name": [
+  "output"
+ ],
+ "ofm_file": [
+  "ref-output-0.npy"
+ ],
+ "expected_failure": false,
+ "meta": {
+  "generator": "scripts/onnx_testcases.py",
+  "seed": 11,
+  "description": "A quantized (uint8 activations, int8 per-channel weights) CNN as the ONNX\n    quantizer emits: QuantizeLinear -> QLinearConv -> depthwise QLinearConv ->\n    com.microsoft.QLinearAdd -> com.microsoft.QLinearGlobalAveragePool -> Reshape ->\n    QLinearMatMul (per-column) -> DequantizeLinear. Bit-exact against onnxruntime.",
+  "opset": 13
+ }
+}

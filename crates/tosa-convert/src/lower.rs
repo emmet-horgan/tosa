@@ -340,6 +340,14 @@ pub fn lower_graph(source: &SourceGraph, registry: &LoweringRegistry, options: &
         ctx.bind(id, v);
     }
 
+    // Outputs some later node or the graph reads; a lowering may leave any
+    // other (unused optional) output unbound.
+    let used: std::collections::HashSet<TensorId> = source
+        .nodes
+        .iter()
+        .flat_map(|n| n.inputs.iter().flatten().copied())
+        .chain(source.outputs.iter().copied())
+        .collect();
     for node in &source.nodes {
         let lowering = registry.get(&node.op).expect("checked by analyze");
         ctx.node = Some(node);
@@ -349,7 +357,7 @@ pub fn lower_graph(source: &SourceGraph, registry: &LoweringRegistry, options: &
             other => ConvertError::Lowering { op: node.op.clone(), node: node.name.clone(), reason: other.to_string() },
         })?;
         for &out in &node.outputs {
-            if !ctx.values.contains_key(&out) && !ctx.computed.contains_key(&out) {
+            if used.contains(&out) && !ctx.values.contains_key(&out) && !ctx.computed.contains_key(&out) {
                 let name = ctx.tensor(out).name.clone();
                 return Err(ConvertError::Lowering {
                     op: node.op.clone(),

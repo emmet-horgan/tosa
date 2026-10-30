@@ -135,7 +135,11 @@ pub fn load(bytes: &[u8]) -> Result<SourceGraph> {
         let dtype = vi.elem_type.map(dtype_of).unwrap_or(SourceDType::F32);
         let shape: Vec<i64> =
             vi.shape.clone().unwrap_or_default().into_iter().map(|d| d.unwrap_or(SYMBOLIC_DIM)).collect();
-        let id = tensor(&mut graph, &mut ids, SourceTensor::new(&vi.name, dtype, &shape));
+        let (dtype, original) =
+            if dtype == SourceDType::U8 { (SourceDType::I8, Some(SourceDType::U8)) } else { (dtype, None) };
+        let mut st = SourceTensor::new(&vi.name, dtype, &shape);
+        st.original_dtype = original;
+        let id = tensor(&mut graph, &mut ids, st);
         graph.inputs.push(id);
     }
     // Declared intermediate and output types.
@@ -209,7 +213,11 @@ pub fn load(bytes: &[u8]) -> Result<SourceGraph> {
                 ),
                 None => (SourceDType::F32, Vec::new()),
             };
-            let id = tensor(&mut graph, &mut ids, SourceTensor::new(output, dtype, &shape));
+            let (dtype, original) =
+                if dtype == SourceDType::U8 { (SourceDType::I8, Some(SourceDType::U8)) } else { (dtype, None) };
+            let mut st = SourceTensor::new(output, dtype, &shape);
+            st.original_dtype = original;
+            let id = tensor(&mut graph, &mut ids, st);
             outputs.push(id);
         }
         let mut attrs = Attrs::new();

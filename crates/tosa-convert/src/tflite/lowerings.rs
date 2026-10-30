@@ -14,11 +14,11 @@
 //! input hook converts them with RESCALE (`input_unsigned`), and the output
 //! hook converts back (`output_unsigned`).
 
-use tosa_ir::{DType, NanMode, Op, OpAttribute, RoundingMode, TensorData, TensorRef};
+use tosa_ir::{DType, NanMode, Op, OpAttribute, ResizeMode, RoundingMode, TensorData, TensorRef};
 
 use crate::error::Result;
 use crate::lower::{LowerCtx, LoweringRegistry};
-use crate::quant::{RescaleSpec, emit_rescale};
+use crate::quant::{self, RescaleSpec, emit_rescale};
 use crate::source::{Quantization, SourceDType, SourceNode, TensorId};
 
 pub fn registry() -> LoweringRegistry {
@@ -45,6 +45,7 @@ pub fn registry() -> LoweringRegistry {
     r.register("PAD", pad);
     r.register("MEAN", mean);
     r.register("CONCATENATION", concatenation);
+    register_more(&mut r);
     r.set_input_hook(input_hook);
     r.set_output_hook(output_hook);
     r
@@ -292,16 +293,16 @@ fn dequantize_temp(ctx: &mut LowerCtx<'_>, input: &TensorRef, id: TensorId, hint
     float_mul(ctx, &centred, &s_c, &shape, &format!("{hint}_real"))
 }
 
-/// Quantize an FP32 tensor into source tensor `out`: `round(x / scale) + zero_point`, saturated.
+/// Quantize an FP32 tensor into source tensor `out`:
+/// `saturate(round(x / scale) + zero_point)` with TFLite's rounding
+/// (`std::round`, half away from zero) of the exact quotient
+/// (see [`crate::quant::quantize_exact`]).
 fn quantize_into(ctx: &mut LowerCtx<'_>, input: &TensorRef, out: TensorId) -> Result<TensorRef> {
     let (scale, zp) = scale_zp(ctx, out)?;
-    let shape = input.shape.clone();
-    let rank = shape.len();
-    let inv = f32_const(ctx, (1.0 / scale) as f32, rank, "quant_inv_scale")?;
-    let scaled = float_mul(ctx, input, &inv, &shape, "quant_scaled")?;
-    let zp_c = f32_const(ctx, zp as f32, rank, "quant_zp")?;
-    let shifted = ctx.emit_temp(Op::Add, OpAttribute::None, &[&scaled, &zp_c], DType::F32, &shape, "quant_shifted");
-    ctx.emit(Op::Cast, OpAttribute::Cast { input_unsigned: false }, &[&shifted], out)
+    let dtype = ctx.dtype(out)?;
+    let saturated =
+        quant::quantize_exact(ctx, input, scale as f32, zp as i32, dtype, quant::Ties::AwayFromZero, "quant")?;
+    ctx.emit(Op::Cast, OpAttribute::Cast { input_unsigned: false }, &[&saturated], out)
 }
 
 // ---------------------------------------------------------------------------
@@ -913,4 +914,996 @@ fn output_hook(id: TensorId, value: TensorRef, ctx: &mut LowerCtx<'_>) -> Result
     let value = ctx.block.rename(&value, &format!("{name}_i8")).unwrap_or(value);
     let spec = RescaleSpec::per_tensor(1.0, zp, zp + 128).rounding(RoundingMode::Single).output_unsigned(true);
     emit_rescale(ctx, &value, DType::I8, &spec, &name)
+}
+
+// ---------------------------------------------------------------------------
+// Second batch of operators: activations, resizing, slicing, reductions,
+// comparisons and the remaining element-wise functions.
+// ---------------------------------------------------------------------------
+
+/// Register the second batch of lowerings.
+pub(super) fn register_more(r: &mut LoweringRegistry) {
+    r.register("HARD_SWISH", hard_swish);
+    r.register("PRELU", prelu);
+    r.register("LEAKY_RELU", leaky_relu);
+    r.register("ELU", elu);
+    r.register("GELU", gelu);
+    r.register("MAXIMUM", |n, c| max_min(n, c, Op::Maximum));
+    r.register("MINIMUM", |n, c| max_min(n, c, Op::Minimum));
+    r.register("EXP", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Exp, x, "exp"))));
+    r.register("LOG", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Log, x, "log"))));
+    r.register("RSQRT", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Rsqrt, x, "rsqrt"))));
+    r.register("SQRT", |n, c| float_fn(n, c, sqrt_temp));
+    r.register("SIN", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Sin, x, "sin"))));
+    r.register("COS", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Cos, x, "cos"))));
+    r.register("ABS", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Abs, x, "abs"))));
+    r.register("FLOOR", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Floor, x, "floor"))));
+    r.register("CEIL", |n, c| float_fn(n, c, |ctx, x| Ok(unary_temp(ctx, Op::Ceil, x, "ceil"))));
+    r.register("NEG", neg);
+    r.register("POW", |n, c| float_binary(n, c, Op::Pow));
+    r.register("DIV", div);
+    r.register("SQUARED_DIFFERENCE", squared_difference);
+    r.register("L2_NORMALIZATION", l2_normalization);
+    r.register("LOG_SOFTMAX", log_softmax);
+    r.register("RESIZE_BILINEAR", |n, c| resize(n, c, ResizeMode::Bilinear));
+    r.register("RESIZE_NEAREST_NEIGHBOR", |n, c| resize(n, c, ResizeMode::Nearest));
+    r.register("TRANSPOSE_CONV", transpose_conv);
+    r.register("TRANSPOSE", transpose);
+    r.register("SLICE", slice);
+    r.register("STRIDED_SLICE", strided_slice);
+    r.register("SPLIT", split);
+    r.register("SPLIT_V", split_v);
+    r.register("PACK", pack);
+    r.register("UNPACK", unpack);
+    r.register("TILE", tile);
+    r.register("GATHER", gather);
+    r.register("DEPTH_TO_SPACE", depth_to_space);
+    r.register("SPACE_TO_DEPTH", space_to_depth);
+    r.register("REDUCE_MAX", |n, c| reduce(n, c, Op::ReduceMax));
+    r.register("REDUCE_MIN", |n, c| reduce(n, c, Op::ReduceMin));
+    r.register("SUM", |n, c| reduce(n, c, Op::ReduceSum));
+    r.register("REDUCE_PROD", |n, c| reduce(n, c, Op::ReduceProduct));
+    r.register("REDUCE_ANY", |n, c| reduce(n, c, Op::ReduceAny));
+    r.register("ARG_MAX", |n, c| arg_max_min(n, c, false));
+    r.register("ARG_MIN", |n, c| arg_max_min(n, c, true));
+    r.register("CAST", cast);
+    r.register("EQUAL", |n, c| compare(n, c, Op::Equal, false, false));
+    r.register("NOT_EQUAL", |n, c| compare(n, c, Op::Equal, false, true));
+    r.register("GREATER", |n, c| compare(n, c, Op::Greater, false, false));
+    r.register("GREATER_EQUAL", |n, c| compare(n, c, Op::GreaterEqual, false, false));
+    r.register("LESS", |n, c| compare(n, c, Op::Greater, true, false));
+    r.register("LESS_EQUAL", |n, c| compare(n, c, Op::GreaterEqual, true, false));
+    r.register("LOGICAL_AND", |n, c| bool_binary(n, c, Op::LogicalAnd));
+    r.register("LOGICAL_OR", |n, c| bool_binary(n, c, Op::LogicalOr));
+    r.register("LOGICAL_NOT", logical_not);
+    r.register("SELECT", select);
+    r.register("SELECT_V2", select);
+    r.register("BATCH_MATMUL", batch_matmul);
+}
+
+fn unary_temp(ctx: &mut LowerCtx<'_>, op: Op, x: &TensorRef, hint: &str) -> TensorRef {
+    let shape = x.shape.clone();
+    ctx.emit_temp(op, OpAttribute::None, &[x], x.dtype, &shape, hint)
+}
+
+/// `sqrt(x)` as `x ^ 0.5`.
+fn sqrt_temp(ctx: &mut LowerCtx<'_>, x: &TensorRef) -> Result<TensorRef> {
+    let half = f32_const(ctx, 0.5, x.shape.len(), "half")?;
+    let shape = x.shape.clone();
+    Ok(ctx.emit_temp(Op::Pow, OpAttribute::None, &[x, &half], x.dtype, &shape, "sqrt"))
+}
+
+/// Element-wise binary operator on float tensors with rank alignment.
+fn binary_temp(ctx: &mut LowerCtx<'_>, op: Op, a: &TensorRef, b: &TensorRef, hint: &str) -> Result<TensorRef> {
+    let (a, b) = align_ranks(ctx, a.clone(), b.clone());
+    let shape: Vec<i32> = a.shape.iter().zip(&b.shape).map(|(&x, &y)| x.max(y)).collect();
+    Ok(if op == Op::Mul {
+        float_mul(ctx, &a, &b, &shape, hint)?
+    } else if matches!(op, Op::Maximum | Op::Minimum) {
+        let attr = OpAttribute::NanPropagation { nan_mode: NanMode::Propagate };
+        ctx.emit_temp(op, attr, &[&a, &b], a.dtype, &shape, hint)
+    } else {
+        ctx.emit_temp(op, OpAttribute::None, &[&a, &b], a.dtype, &shape, hint)
+    })
+}
+
+/// Bind `value` as output `index` under the source tensor's name.
+fn bind_named(ctx: &mut LowerCtx<'_>, node: &SourceNode, index: usize, value: TensorRef) -> Result<()> {
+    let out = node.output(index)?;
+    let name = ctx.tensor(out).name.clone();
+    let value = ctx.block.rename(&value, &name).unwrap_or(value);
+    ctx.bind(out, value);
+    Ok(())
+}
+
+/// Run `f` on the float form of the node's inputs: quantized inputs are
+/// dequantized first and the float result is quantized into the output
+/// (TFLite's fixed-point and lookup-table kernels for these operators are
+/// not reproduced step by step).
+fn float_path(
+    node: &SourceNode,
+    ctx: &mut LowerCtx<'_>,
+    n_inputs: usize,
+    f: impl FnOnce(&mut LowerCtx<'_>, &[TensorRef]) -> Result<TensorRef>,
+) -> Result<()> {
+    let out = node.output(0)?;
+    let mut xs = Vec::with_capacity(n_inputs);
+    let mut quantized = false;
+    for i in 0..n_inputs {
+        let id = node.input(i)?;
+        let v = ctx.value(id)?;
+        if is_quantized(ctx, id) {
+            quantized = true;
+            xs.push(dequantize_temp(ctx, &v, id, &format!("in{i}"))?);
+        } else {
+            xs.push(v);
+        }
+    }
+    let y = f(ctx, &xs)?;
+    if quantized || is_quantized(ctx, out) {
+        quantize_into(ctx, &y, out)?;
+        Ok(())
+    } else {
+        fused_activation(node, ctx, y, out)
+    }
+}
+
+fn float_fn(
+    node: &SourceNode,
+    ctx: &mut LowerCtx<'_>,
+    f: impl FnOnce(&mut LowerCtx<'_>, &TensorRef) -> Result<TensorRef>,
+) -> Result<()> {
+    float_path(node, ctx, 1, |ctx, xs| f(ctx, &xs[0]))
+}
+
+fn float_binary(node: &SourceNode, ctx: &mut LowerCtx<'_>, op: Op) -> Result<()> {
+    float_path(node, ctx, 2, |ctx, xs| binary_temp(ctx, op, &xs[0], &xs[1], "binary"))
+}
+
+/// `x * relu6(x + 3) / 6`.
+fn hard_swish(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let rank = x.shape.len();
+        let shape = x.shape.clone();
+        let three = f32_const(ctx, 3.0, rank, "three")?;
+        let shifted = ctx.emit_temp(Op::Add, OpAttribute::None, &[x, &three], x.dtype, &shape, "hswish_shift");
+        let attr = OpAttribute::Clamp {
+            min_val: bound_bytes(ctx, x.dtype, 0.0)?,
+            max_val: bound_bytes(ctx, x.dtype, 6.0)?,
+            nan_mode: NanMode::Propagate,
+        };
+        let gate = ctx.emit_temp(Op::Clamp, attr, &[&shifted], x.dtype, &shape, "hswish_gate");
+        let prod = float_mul(ctx, x, &gate, &shape, "hswish_prod")?;
+        let sixth = f32_const(ctx, 1.0 / 6.0, rank, "sixth")?;
+        float_mul(ctx, &prod, &sixth, &shape, "hswish")
+    })
+}
+
+/// `max(x, 0) + alpha * min(x, 0)` with a broadcast `alpha` tensor.
+fn prelu(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 2, |ctx, xs| {
+        let (x, alpha) = (&xs[0], &xs[1]);
+        let zero = f32_const(ctx, 0.0, x.shape.len(), "zero")?;
+        let pos = binary_temp(ctx, Op::Maximum, x, &zero, "prelu_pos")?;
+        let neg = binary_temp(ctx, Op::Minimum, x, &zero, "prelu_neg")?;
+        let scaled = binary_temp(ctx, Op::Mul, &neg, alpha, "prelu_scaled")?;
+        binary_temp(ctx, Op::Add, &pos, &scaled, "prelu")
+    })
+}
+
+fn leaky_relu(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let alpha = node.attr_float("alpha")? as f32;
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let k = f32_const(ctx, alpha, x.shape.len(), "alpha")?;
+        let scaled = binary_temp(ctx, Op::Mul, x, &k, "leaky_scaled")?;
+        if alpha <= 1.0 {
+            binary_temp(ctx, Op::Maximum, x, &scaled, "leaky_relu")
+        } else {
+            binary_temp(ctx, Op::Minimum, x, &scaled, "leaky_relu")
+        }
+    })
+}
+
+/// `x > 0 ? x : exp(x) - 1`.
+fn elu(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let shape = x.shape.clone();
+        let zero = f32_const(ctx, 0.0, x.shape.len(), "zero")?;
+        let one = f32_const(ctx, 1.0, x.shape.len(), "one")?;
+        let e = unary_temp(ctx, Op::Exp, x, "elu_exp");
+        let em1 = binary_temp(ctx, Op::Sub, &e, &one, "elu_neg")?;
+        let (xz, zz) = align_ranks(ctx, x.clone(), zero);
+        let cond = ctx.emit_temp(Op::Greater, OpAttribute::None, &[&xz, &zz], DType::Bool, &shape, "elu_cond");
+        Ok(ctx.emit_temp(Op::Select, OpAttribute::None, &[&cond, x, &em1], x.dtype, &shape, "elu"))
+    })
+}
+
+/// GELU: exact `0.5 x (1 + erf(x / sqrt 2))`, or the tanh approximation.
+fn gelu(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let approximate = node.attrs.get("approximate").map_or(Ok(false), |_| node.attr_bool("approximate"))?;
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let rank = x.shape.len();
+        let half = f32_const(ctx, 0.5, rank, "half")?;
+        let one = f32_const(ctx, 1.0, rank, "one")?;
+        let inner = if approximate {
+            // tanh(sqrt(2/pi) * (x + 0.044715 x^3))
+            let c = f32_const(ctx, 0.044715, rank, "gelu_c")?;
+            let k = f32_const(ctx, (2.0f64 / std::f64::consts::PI).sqrt() as f32, rank, "gelu_k")?;
+            let x2 = binary_temp(ctx, Op::Mul, x, x, "gelu_x2")?;
+            let x3 = binary_temp(ctx, Op::Mul, &x2, x, "gelu_x3")?;
+            let cx3 = binary_temp(ctx, Op::Mul, &x3, &c, "gelu_cx3")?;
+            let sum = binary_temp(ctx, Op::Add, x, &cx3, "gelu_sum")?;
+            let arg = binary_temp(ctx, Op::Mul, &sum, &k, "gelu_arg")?;
+            unary_temp(ctx, Op::Tanh, &arg, "gelu_tanh")
+        } else {
+            let inv_sqrt2 = f32_const(ctx, std::f32::consts::FRAC_1_SQRT_2, rank, "inv_sqrt2")?;
+            let arg = binary_temp(ctx, Op::Mul, x, &inv_sqrt2, "gelu_arg")?;
+            unary_temp(ctx, Op::Erf, &arg, "gelu_erf")
+        };
+        let gate = binary_temp(ctx, Op::Add, &inner, &one, "gelu_gate")?;
+        let hx = binary_temp(ctx, Op::Mul, x, &half, "gelu_hx")?;
+        binary_temp(ctx, Op::Mul, &hx, &gate, "gelu")
+    })
+}
+
+/// MAXIMUM / MINIMUM: quantized inputs share the output's parameters in
+/// TFLite, so they are compared directly.
+fn max_min(node: &SourceNode, ctx: &mut LowerCtx<'_>, op: Op) -> Result<()> {
+    let (a_id, b_id, out) = (node.input(0)?, node.input(1)?, node.output(0)?);
+    let a = ctx.value(a_id)?;
+    let b = ctx.value(b_id)?;
+    if is_quantized(ctx, out) {
+        if a.dtype != DType::I8 || b.dtype != DType::I8 {
+            return ctx.fail("quantized MAXIMUM/MINIMUM needs INT8 operands");
+        }
+        // TOSA MAXIMUM/MINIMUM take INT32; widen, compare, narrow (exact).
+        let a32 = emit_rescale(
+            ctx,
+            &a,
+            DType::I32,
+            &RescaleSpec::per_tensor(1.0, 0, 0).rounding(RoundingMode::Single),
+            "max_a",
+        )?;
+        let b32 = emit_rescale(
+            ctx,
+            &b,
+            DType::I32,
+            &RescaleSpec::per_tensor(1.0, 0, 0).rounding(RoundingMode::Single),
+            "max_b",
+        )?;
+        let y = binary_temp(ctx, op, &a32, &b32, "max_min")?;
+        let shape = y.shape.clone();
+        let y8 = ctx.emit_temp(
+            Op::Cast,
+            OpAttribute::Cast { input_unsigned: false },
+            &[&y],
+            DType::I8,
+            &shape,
+            "max_min_i8",
+        );
+        return bind_named(ctx, node, 0, y8);
+    }
+    let y = binary_temp(ctx, op, &a, &b, "max_min")?;
+    fused_activation(node, ctx, y, out)
+}
+
+fn neg(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let (in_id, out) = (node.input(0)?, node.output(0)?);
+    let x = ctx.value(in_id)?;
+    if is_quantized(ctx, in_id) {
+        let (_, zi) = scale_zp(ctx, in_id)?;
+        let (_, zo) = scale_zp(ctx, out)?;
+        let izp = ctx.scalar(TensorData::I8(vec![zi as i8]), "neg_in_zp")?;
+        let ozp = ctx.scalar(TensorData::I8(vec![zo as i8]), "neg_out_zp")?;
+        ctx.emit(Op::Negate, OpAttribute::None, &[&x, &izp, &ozp], out)?;
+        return Ok(());
+    }
+    let zp = ctx.zero(x.dtype, "zp")?;
+    ctx.emit(Op::Negate, OpAttribute::None, &[&x, &zp, &zp], out)?;
+    Ok(())
+}
+
+fn div(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 2, |ctx, xs| {
+        let inv = unary_temp(ctx, Op::Reciprocal, &xs[1], "div_inv");
+        binary_temp(ctx, Op::Mul, &xs[0], &inv, "div")
+    })
+}
+
+fn squared_difference(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 2, |ctx, xs| {
+        let d = binary_temp(ctx, Op::Sub, &xs[0], &xs[1], "sqdiff_d")?;
+        binary_temp(ctx, Op::Mul, &d, &d, "sqdiff")
+    })
+}
+
+/// `x / sqrt(max(sum(x^2), 1e-6))` over the last axis.
+fn l2_normalization(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let rank = x.shape.len();
+        let axis = (rank - 1) as i32;
+        let mut reduced = x.shape.clone();
+        reduced[axis as usize] = 1;
+        let sq = binary_temp(ctx, Op::Mul, x, x, "l2_sq")?;
+        let sum = ctx.emit_temp(
+            Op::ReduceSum,
+            OpAttribute::Reduce { axis, nan_mode: NanMode::Propagate },
+            &[&sq],
+            x.dtype,
+            &reduced,
+            "l2_sum",
+        );
+        let eps = f32_const(ctx, 1e-6, rank, "l2_eps")?;
+        let floored = binary_temp(ctx, Op::Maximum, &sum, &eps, "l2_floored")?;
+        let inv = unary_temp(ctx, Op::Rsqrt, &floored, "l2_inv");
+        binary_temp(ctx, Op::Mul, x, &inv, "l2_norm")
+    })
+}
+
+/// `x - max - log(sum(exp(x - max)))` over the last axis.
+fn log_softmax(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    float_path(node, ctx, 1, |ctx, xs| {
+        let x = &xs[0];
+        let rank = x.shape.len();
+        let axis = (rank - 1) as i32;
+        let mut reduced = x.shape.clone();
+        reduced[axis as usize] = 1;
+        let reduce = |nan_mode| OpAttribute::Reduce { axis, nan_mode };
+        let max = ctx.emit_temp(Op::ReduceMax, reduce(NanMode::Propagate), &[x], x.dtype, &reduced, "lsm_max");
+        let shifted = binary_temp(ctx, Op::Sub, x, &max, "lsm_shifted")?;
+        let e = unary_temp(ctx, Op::Exp, &shifted, "lsm_exp");
+        let sum = ctx.emit_temp(Op::ReduceSum, reduce(NanMode::Propagate), &[&e], x.dtype, &reduced, "lsm_sum");
+        let log = unary_temp(ctx, Op::Log, &sum, "lsm_log");
+        binary_temp(ctx, Op::Sub, &shifted, &log, "log_softmax")
+    })
+}
+
+// --- resizing ---------------------------------------------------------------
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { a.abs().max(1) } else { gcd(b, a % b) }
+}
+
+/// TOSA RESIZE parameters `(scale_n, scale_d, offset, border)` for one axis
+/// mapping `input` samples to `output`, for the given coordinate convention.
+fn resize_axis(
+    ctx: &LowerCtx<'_>,
+    input: i64,
+    output: i64,
+    align_corners: bool,
+    half_pixel: bool,
+    nearest: bool,
+) -> Result<(i64, i64, i64, i64)> {
+    let (mut n, mut d, offset, border) = if align_corners && output > 1 {
+        // src = o * (in - 1) / (out - 1)
+        (output - 1, input - 1, 0, 0)
+    } else if half_pixel {
+        // src = (o + 0.5) * in / out - 0.5; TOSA nearest rounds half up,
+        // which with this offset is TFLite's floor((o + 0.5) * in / out).
+        (2 * output, 2 * input, input - output, output - input)
+    } else if nearest {
+        // floor(o * in / out) via round-half-up(v - 0.5)
+        (2 * output, 2 * input, -output, output - 2 * input)
+    } else {
+        // src = o * in / out
+        (output, input, 0, output - input)
+    };
+    let g = gcd(n, d);
+    let (mut offset, mut border) = (offset, border);
+    if g > 1 && offset % g == 0 && border % g == 0 {
+        n /= g;
+        d /= g;
+        offset /= g;
+        border /= g;
+    }
+    if n <= 0 || d <= 0 || n > 1 << 11 {
+        return ctx.fail(format!("resize from {input} to {output} exceeds TOSA's scale limits"));
+    }
+    Ok((n, d, offset, border))
+}
+
+fn resize(node: &SourceNode, ctx: &mut LowerCtx<'_>, mode: ResizeMode) -> Result<()> {
+    let (in_id, out) = (node.input(0)?, node.output(0)?);
+    let size = ctx.constant_ints(node.input(1)?)?;
+    if size.len() != 2 {
+        return ctx.fail("size must have 2 values");
+    }
+    let align_corners = node.attrs.get("align_corners").map_or(Ok(false), |_| node.attr_bool("align_corners"))?;
+    let half_pixel =
+        node.attrs.get("half_pixel_centers").map_or(Ok(false), |_| node.attr_bool("half_pixel_centers"))?;
+    let x = ctx.value(in_id)?;
+    if x.shape.len() != 4 {
+        return ctx.fail("resize input must be 4-D");
+    }
+    let nearest = mode == ResizeMode::Nearest;
+    // An axis resized from a single sample repeats that sample (every output
+    // position maps to index 0): a TILE, which RESIZE's parameter ranges
+    // cannot express exactly. The remaining axis, if any, is a RESIZE.
+    let tile_y = x.shape[1] == 1 && size[0] != 1;
+    let tile_x = x.shape[2] == 1 && size[1] != 1;
+    let (yn, yd, yo, yb) = if tile_y {
+        (1, 1, 0, 0)
+    } else {
+        resize_axis(ctx, x.shape[1] as i64, size[0], align_corners, half_pixel, nearest)?
+    };
+    let (xn, xd, xo, xb) = if tile_x {
+        (1, 1, 0, 0)
+    } else {
+        resize_axis(ctx, x.shape[2] as i64, size[1], align_corners, half_pixel, nearest)?
+    };
+    let out_shape = vec![x.shape[0], size[0] as i32, size[1] as i32, x.shape[3]];
+    let emit_resize = |ctx: &mut LowerCtx<'_>, input: &TensorRef, dtype: DType| -> TensorRef {
+        let mut cur = input.clone();
+        if !(tile_y && tile_x) {
+            let shape = vec![
+                x.shape[0],
+                if tile_y { 1 } else { size[0] as i32 },
+                if tile_x { 1 } else { size[1] as i32 },
+                x.shape[3],
+            ];
+            let scale = ctx.shape_const(&[yn, yd, xn, xd], "resize_scale");
+            let offset = ctx.shape_const(&[yo, xo], "resize_offset");
+            let border = ctx.shape_const(&[yb, xb], "resize_border");
+            cur = ctx.emit_temp(
+                Op::Resize,
+                OpAttribute::Resize { mode },
+                &[&cur, &scale, &offset, &border],
+                dtype,
+                &shape,
+                "resize",
+            );
+        }
+        if tile_y || tile_x {
+            let multiples = [1, if tile_y { size[0] } else { 1 }, if tile_x { size[1] } else { 1 }, 1];
+            let m = ctx.shape_const(&multiples, "resize_tile");
+            cur = ctx.emit_temp(Op::Tile, OpAttribute::None, &[&cur, &m], dtype, &out_shape, "resize_tiled");
+        }
+        cur
+    };
+    if is_quantized(ctx, in_id) && nearest {
+        // Pure data movement: exact in the quantized domain.
+        let y = emit_resize(ctx, &x, x.dtype);
+        return bind_named(ctx, node, 0, y);
+    }
+    if is_quantized(ctx, in_id) {
+        let xf = dequantize_temp(ctx, &x, in_id, "resize_in")?;
+        let y = emit_resize(ctx, &xf, DType::F32);
+        quantize_into(ctx, &y, out)?;
+        return Ok(());
+    }
+    let y = emit_resize(ctx, &x, x.dtype);
+    bind_named(ctx, node, 0, y)
+}
+
+/// TRANSPOSE_CONV: inputs output_shape, weights `[OC, KH, KW, IC]`, input,
+/// optional bias.
+fn transpose_conv(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let out_shape: Vec<i32> = ctx.constant_ints(node.input(0)?)?.iter().map(|&d| d as i32).collect();
+    let (weight_id, input_id, out) = (node.input(1)?, node.input(2)?, node.output(0)?);
+    let input = ctx.value(input_id)?;
+    let weight = ctx.value(weight_id)?;
+    let in_shape = static_shape(ctx, input_id)?;
+    let w_shape = static_shape(ctx, weight_id)?;
+    if in_shape.len() != 4 || w_shape.len() != 4 || out_shape.len() != 4 {
+        return ctx.fail("TRANSPOSE_CONV needs 4-D tensors");
+    }
+    let stride = [node.attr_int("stride_h")? as i32, node.attr_int("stride_w")? as i32];
+    let (kh, kw) = (w_shape[1], w_shape[2]);
+    // TFLite: output = (in - 1) * stride + k - pad_total, with SAME padding split
+    // like a forward convolution; TOSA out_pad is the negative of that padding.
+    let mut out_pad = [0i32; 4];
+    for d in 0..2 {
+        let (size, k, s, o) = (in_shape[1 + d], [kh, kw][d], stride[d], out_shape[1 + d]);
+        let total = (size - 1) * s + k - o;
+        let (before, after) = match node.attr_str("padding")? {
+            "VALID" => (0, total),
+            _ => (total / 2, total - total / 2),
+        };
+        out_pad[2 * d] = -before;
+        out_pad[2 * d + 1] = -after;
+    }
+    let out_channels = out_shape[3];
+    let bias = bias_or_zeros(ctx, node, 3, input.dtype, out_channels)?;
+    let attr = move |acc_type: DType| OpAttribute::TransposeConv2d {
+        out_pad: out_pad.to_vec(),
+        stride: stride.to_vec(),
+        local_bound: false,
+        acc_type,
+    };
+    let operands = ConvOperands { input, weight, bias, out_channels, input_id, weight_id, out, out_shape };
+    emit_conv(node, ctx, Op::TransposeConv2d, attr, operands, |_, v| Ok(v))
+}
+
+// --- data movement ---------------------------------------------------------
+
+fn transpose(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let perms: Vec<i32> = ctx.constant_ints(node.input(1)?)?.iter().map(|&p| p as i32).collect();
+    let y = crate::layout::transpose(ctx, &x, &perms, "transpose");
+    bind_named(ctx, node, 0, y)
+}
+
+fn slice_temp(ctx: &mut LowerCtx<'_>, x: &TensorRef, start: &[i64], size: &[i64], hint: &str) -> TensorRef {
+    let shape: Vec<i32> = size.iter().map(|&d| d as i32).collect();
+    let s = ctx.shape_const(start, &format!("{hint}_start"));
+    let z = ctx.shape_const(size, &format!("{hint}_size"));
+    ctx.emit_temp(Op::Slice, OpAttribute::None, &[x, &s, &z], x.dtype, &shape, hint)
+}
+
+fn slice(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let begin = ctx.constant_ints(node.input(1)?)?;
+    let mut size = ctx.constant_ints(node.input(2)?)?;
+    if begin.len() != x.shape.len() || size.len() != x.shape.len() {
+        return ctx.fail("begin and size must match the input rank");
+    }
+    for d in 0..size.len() {
+        if size[d] < 0 {
+            size[d] = x.shape[d] as i64 - begin[d];
+        }
+    }
+    let y = slice_temp(ctx, &x, &begin, &size, "slice");
+    bind_named(ctx, node, 0, y)
+}
+
+fn strided_slice(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let begin = ctx.constant_ints(node.input(1)?)?;
+    let end = ctx.constant_ints(node.input(2)?)?;
+    let strides = ctx.constant_ints(node.input(3)?)?;
+    let masks = |k: &str| node.attr_int_or(k, 0);
+    let (begin_mask, end_mask) = (masks("begin_mask")?, masks("end_mask")?);
+    let (ellipsis, new_axis, shrink) = (masks("ellipsis_mask")?, masks("new_axis_mask")?, masks("shrink_axis_mask")?);
+    if ellipsis != 0 || new_axis != 0 {
+        return ctx.fail("ellipsis_mask and new_axis_mask are not supported");
+    }
+    if strides.iter().any(|&s| s < 1) {
+        return ctx.fail(format!("negative or zero strides {strides:?} are not supported"));
+    }
+    let rank = x.shape.len();
+    let mut start = vec![0i64; rank];
+    let mut size = vec![0i64; rank];
+    let mut out_shape = Vec::new();
+    // Per axis: the stride and the number of elements it selects.
+    let mut strided: Vec<(usize, i64, i64)> = Vec::new();
+    for d in 0..rank {
+        let dim = x.shape[d] as i64;
+        let stride = strides.get(d).copied().unwrap_or(1);
+        let mut b = begin.get(d).copied().unwrap_or(0);
+        let mut e = end.get(d).copied().unwrap_or(dim);
+        if b < 0 {
+            b += dim;
+        }
+        if e < 0 {
+            e += dim;
+        }
+        if begin_mask & (1 << d) != 0 {
+            b = 0;
+        }
+        if end_mask & (1 << d) != 0 {
+            e = dim;
+        }
+        let b = b.clamp(0, dim);
+        let e = if shrink & (1 << d) != 0 { b + 1 } else { e.clamp(b, dim) };
+        let count = (e - b + stride - 1) / stride;
+        start[d] = b;
+        // The contiguous span covering the selected elements.
+        size[d] = if count == 0 { 0 } else { (count - 1) * stride + 1 };
+        if stride > 1 && count > 0 {
+            strided.push((d, stride, count));
+        }
+        if shrink & (1 << d) == 0 {
+            out_shape.push(count as i32);
+        }
+    }
+    let mut cur = slice_temp(ctx, &x, &start, &size, "strided_slice");
+    // A stride s on an axis of n selected elements: pad the span to n * s,
+    // view it as [n, s] and keep column 0.
+    for (d, stride, count) in strided {
+        let span = cur.shape[d] as i64;
+        let mut pads = vec![0i64; 2 * rank];
+        pads[2 * d + 1] = count * stride - span;
+        let mut padded_shape = cur.shape.clone();
+        padded_shape[d] = (count * stride) as i32;
+        let p = ctx.shape_const(&pads, "stride_pads");
+        let zero = ctx.zero(cur.dtype, "stride_pad_value")?;
+        let padded =
+            ctx.emit_temp(Op::Pad, OpAttribute::None, &[&cur, &p, &zero], cur.dtype, &padded_shape, "stride_padded");
+        let mut split_shape: Vec<i32> = padded_shape[..d].to_vec();
+        split_shape.push(count as i32);
+        split_shape.push(stride as i32);
+        split_shape.extend_from_slice(&padded_shape[d + 1..]);
+        let split = reshape_temp(ctx, &padded, &split_shape, "stride_split");
+        let mut s_start = vec![0i64; split_shape.len()];
+        let mut s_size: Vec<i64> = split_shape.iter().map(|&v| v as i64).collect();
+        s_start[d + 1] = 0;
+        s_size[d + 1] = 1;
+        let picked = slice_temp(ctx, &split, &s_start, &s_size, "stride_picked");
+        let mut merged = padded_shape.clone();
+        merged[d] = count as i32;
+        cur = reshape_temp(ctx, &picked, &merged, "stride_merged");
+    }
+    let y = if shrink != 0 { reshape_temp(ctx, &cur, &out_shape, "strided_slice_shrunk") } else { cur };
+    bind_named(ctx, node, 0, y)
+}
+
+fn split_along(ctx: &mut LowerCtx<'_>, node: &SourceNode, x: &TensorRef, axis: usize, sizes: &[i64]) -> Result<()> {
+    let mut offset = 0i64;
+    for (i, &len) in sizes.iter().enumerate() {
+        let mut start = vec![0i64; x.shape.len()];
+        let mut size: Vec<i64> = x.shape.iter().map(|&d| d as i64).collect();
+        start[axis] = offset;
+        size[axis] = len;
+        let piece = slice_temp(ctx, x, &start, &size, &format!("split{i}"));
+        bind_named(ctx, node, i, piece)?;
+        offset += len;
+    }
+    Ok(())
+}
+
+fn split(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let axis_v = ctx.constant_ints(node.input(0)?)?;
+    let x = ctx.value(node.input(1)?)?;
+    let rank = x.shape.len() as i64;
+    let axis = axis_v.first().copied().unwrap_or(0);
+    let axis = if axis < 0 { axis + rank } else { axis } as usize;
+    let n = node.attr_int("num_splits")?;
+    let dim = x.shape[axis] as i64;
+    if n <= 0 || dim % n != 0 {
+        return ctx.fail(format!("cannot split {dim} into {n} equal parts"));
+    }
+    let sizes = vec![dim / n; n as usize];
+    split_along(ctx, node, &x, axis, &sizes)
+}
+
+fn split_v(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let mut sizes = ctx.constant_ints(node.input(1)?)?;
+    let axis_v = ctx.constant_ints(node.input(2)?)?;
+    let rank = x.shape.len() as i64;
+    let axis = axis_v.first().copied().unwrap_or(0);
+    let axis = if axis < 0 { axis + rank } else { axis } as usize;
+    let dim = x.shape[axis] as i64;
+    if let Some(i) = sizes.iter().position(|&s| s == -1) {
+        let known: i64 = sizes.iter().filter(|&&s| s >= 0).sum();
+        sizes[i] = dim - known;
+    }
+    split_along(ctx, node, &x, axis, &sizes)
+}
+
+fn pack(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let ids: Vec<TensorId> = node.inputs.iter().flatten().copied().collect();
+    let out = node.output(0)?;
+    let out_shape = shape_of(ctx, out);
+    let rank = out_shape.len() as i64;
+    let mut axis = node.attr_int("axis")?;
+    if axis < 0 {
+        axis += rank;
+    }
+    let mut parts = Vec::with_capacity(ids.len());
+    for (i, &id) in ids.iter().enumerate() {
+        let v = ctx.value(id)?;
+        let mut shape = v.shape.clone();
+        shape.insert(axis as usize, 1);
+        parts.push(reshape_temp(ctx, &v, &shape, &format!("pack{i}")));
+    }
+    let refs: Vec<&TensorRef> = parts.iter().collect();
+    let y =
+        ctx.emit_temp(Op::Concat, OpAttribute::Concat { axis: axis as i32 }, &refs, parts[0].dtype, &out_shape, "pack");
+    bind_named(ctx, node, 0, y)
+}
+
+fn unpack(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let rank = x.shape.len() as i64;
+    let mut axis = node.attr_int("axis")?;
+    if axis < 0 {
+        axis += rank;
+    }
+    let axis = axis as usize;
+    let n = node.attr_int("num")? as usize;
+    let mut out_shape = x.shape.clone();
+    out_shape.remove(axis);
+    for i in 0..n {
+        let mut start = vec![0i64; x.shape.len()];
+        let mut size: Vec<i64> = x.shape.iter().map(|&d| d as i64).collect();
+        start[axis] = i as i64;
+        size[axis] = 1;
+        let piece = slice_temp(ctx, &x, &start, &size, &format!("unpack{i}"));
+        let piece = reshape_temp(ctx, &piece, &out_shape, &format!("unpack{i}_shaped"));
+        bind_named(ctx, node, i, piece)?;
+    }
+    Ok(())
+}
+
+fn tile(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let multiples = ctx.constant_ints(node.input(1)?)?;
+    let shape: Vec<i32> = x.shape.iter().zip(&multiples).map(|(&d, &m)| d * m as i32).collect();
+    let m = ctx.shape_const(&multiples, "multiples");
+    let y = ctx.emit_temp(Op::Tile, OpAttribute::None, &[&x, &m], x.dtype, &shape, "tile");
+    bind_named(ctx, node, 0, y)
+}
+
+/// GATHER along `axis` with `batch_dims == 0`: TOSA's GATHER works on
+/// `[N, K, C]` values with `[N, W]` indices, so the axis is moved to the
+/// front, the result reshaped and the index dimensions moved into place.
+fn gather(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let params = ctx.value(node.input(0)?)?;
+    let indices = ctx.value(node.input(1)?)?;
+    if node.attr_int_or("batch_dims", 0)? != 0 {
+        return ctx.fail("batch_dims other than 0 is not supported");
+    }
+    let rank = params.shape.len() as i64;
+    let mut axis = node.attr_int_or("axis", 0)?;
+    if axis < 0 {
+        axis += rank;
+    }
+    let axis = axis as usize;
+    let indices = if indices.dtype == DType::I64 || indices.dtype == DType::I32 {
+        indices
+    } else {
+        return ctx.fail("indices must be INT32 or INT64");
+    };
+    // Move the gathered axis first: [K, rest...]
+    let mut perm: Vec<i32> = vec![axis as i32];
+    perm.extend((0..params.shape.len() as i32).filter(|&d| d as usize != axis));
+    let moved = if axis == 0 { params.clone() } else { crate::layout::transpose(ctx, &params, &perm, "gather_perm") };
+    let k = moved.shape[0];
+    let c: i32 = moved.shape[1..].iter().product();
+    let values = reshape_temp(ctx, &moved, &[1, k, c], "gather_values");
+    let w: i32 = indices.shape.iter().product();
+    let idx = reshape_temp(ctx, &indices, &[1, w], "gather_indices");
+    let gathered = ctx.emit_temp(Op::Gather, OpAttribute::None, &[&values, &idx], params.dtype, &[1, w, c], "gather");
+    // [indices..., rest...] then move the index dims to where the axis was.
+    let mut shape: Vec<i32> = indices.shape.clone();
+    shape.extend_from_slice(&moved.shape[1..]);
+    let reshaped = reshape_temp(ctx, &gathered, &shape, "gather_shaped");
+    let ir = indices.shape.len();
+    let mut back: Vec<i32> = Vec::with_capacity(shape.len());
+    back.extend((ir..ir + axis).map(|d| d as i32));
+    back.extend((0..ir).map(|d| d as i32));
+    back.extend((ir + axis..shape.len()).map(|d| d as i32));
+    let y = if crate::layout::is_identity(&back) {
+        reshaped
+    } else {
+        crate::layout::transpose(ctx, &reshaped, &back, "gather_out")
+    };
+    bind_named(ctx, node, 0, y)
+}
+
+fn depth_to_space(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let b = node.attr_int("block_size")? as i32;
+    let [n, h, w, c] = [x.shape[0], x.shape[1], x.shape[2], x.shape[3]];
+    if c % (b * b) != 0 {
+        return ctx.fail("channels must be divisible by block_size^2");
+    }
+    let c2 = c / (b * b);
+    let r1 = reshape_temp(ctx, &x, &[n, h, w, b, b, c2], "d2s_split");
+    let t = crate::layout::transpose(ctx, &r1, &[0, 1, 3, 2, 4, 5], "d2s_perm");
+    let y = reshape_temp(ctx, &t, &[n, h * b, w * b, c2], "d2s");
+    bind_named(ctx, node, 0, y)
+}
+
+fn space_to_depth(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let b = node.attr_int("block_size")? as i32;
+    let [n, h, w, c] = [x.shape[0], x.shape[1], x.shape[2], x.shape[3]];
+    if h % b != 0 || w % b != 0 {
+        return ctx.fail("height and width must be divisible by block_size");
+    }
+    let r1 = reshape_temp(ctx, &x, &[n, h / b, b, w / b, b, c], "s2d_split");
+    let t = crate::layout::transpose(ctx, &r1, &[0, 1, 3, 2, 4, 5], "s2d_perm");
+    let y = reshape_temp(ctx, &t, &[n, h / b, w / b, b * b * c], "s2d");
+    bind_named(ctx, node, 0, y)
+}
+
+// --- reductions and comparisons --------------------------------------------
+
+fn reduce(node: &SourceNode, ctx: &mut LowerCtx<'_>, op: Op) -> Result<()> {
+    let (in_id, out) = (node.input(0)?, node.output(0)?);
+    let x = ctx.value(in_id)?;
+    let rank = x.shape.len() as i64;
+    let mut axes: Vec<usize> = ctx
+        .constant_ints(node.input(1)?)?
+        .iter()
+        .map(|&a| if a < 0 { (a + rank) as usize } else { a as usize })
+        .collect();
+    axes.sort_unstable();
+    axes.dedup();
+    let quantized = is_quantized(ctx, in_id);
+    let floating = op == Op::ReduceProduct;
+    if quantized && (floating || op == Op::ReduceSum) {
+        // SUM of quantized data: TFLite requantizes the sum; do it in float.
+        return float_path(node, ctx, 1, |ctx, xs| {
+            let mut acc = xs[0].clone();
+            for &a in &axes {
+                let mut shape = acc.shape.clone();
+                shape[a] = 1;
+                acc = ctx.emit_temp(
+                    op,
+                    OpAttribute::Reduce { axis: a as i32, nan_mode: NanMode::Propagate },
+                    &[&acc],
+                    acc.dtype,
+                    &shape,
+                    "reduce",
+                );
+            }
+            let out_shape = shape_of(ctx, node.output(0)?);
+            Ok(if acc.shape != out_shape { reshape_temp(ctx, &acc, &out_shape, "reduce_shaped") } else { acc })
+        });
+    }
+    let mut acc = x;
+    for &a in &axes {
+        let mut shape = acc.shape.clone();
+        shape[a] = 1;
+        acc = ctx.emit_temp(
+            op,
+            OpAttribute::Reduce { axis: a as i32, nan_mode: NanMode::Propagate },
+            &[&acc],
+            acc.dtype,
+            &shape,
+            "reduce",
+        );
+    }
+    let out_shape = shape_of(ctx, out);
+    let y = if acc.shape != out_shape { reshape_temp(ctx, &acc, &out_shape, "reduce_shaped") } else { acc };
+    bind_named(ctx, node, 0, y)
+}
+
+fn arg_max_min(node: &SourceNode, ctx: &mut LowerCtx<'_>, min: bool) -> Result<()> {
+    let (in_id, out) = (node.input(0)?, node.output(0)?);
+    let x = ctx.value(in_id)?;
+    let rank = x.shape.len() as i64;
+    let axis_v = ctx.constant_ints(node.input(1)?)?;
+    let mut axis = axis_v.first().copied().unwrap_or(0);
+    if axis < 0 {
+        axis += rank;
+    }
+    let x = if min {
+        if !x.dtype.is_float() {
+            return ctx.fail("ARG_MIN is supported for float inputs only");
+        }
+        let zp = ctx.zero(x.dtype, "zp")?;
+        let shape = x.shape.clone();
+        ctx.emit_temp(Op::Negate, OpAttribute::None, &[&x, &zp, &zp], x.dtype, &shape, "argmin_neg")
+    } else {
+        x
+    };
+    let out_dtype = ctx.dtype(out)?;
+    let mut shape = x.shape.clone();
+    shape.remove(axis as usize);
+    let y = ctx.emit_temp(
+        Op::ArgMax,
+        OpAttribute::ArgMax { axis: axis as i32, nan_mode: NanMode::Propagate },
+        &[&x],
+        out_dtype,
+        &shape,
+        "argmax",
+    );
+    bind_named(ctx, node, 0, y)
+}
+
+fn cast(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let (in_id, out) = (node.input(0)?, node.output(0)?);
+    let x = ctx.value(in_id)?;
+    let to = ctx.dtype(out)?;
+    if x.dtype == to {
+        return bind_named(ctx, node, 0, x);
+    }
+    ctx.emit(Op::Cast, OpAttribute::Cast { input_unsigned: false }, &[&x], out)?;
+    Ok(())
+}
+
+/// Widen INT8/INT16 operands to INT32 for operators TOSA defines on INT32.
+fn widen_for_compare(ctx: &mut LowerCtx<'_>, x: TensorRef) -> TensorRef {
+    if matches!(x.dtype, DType::I8 | DType::I16) {
+        let shape = x.shape.clone();
+        ctx.emit_temp(Op::Cast, OpAttribute::Cast { input_unsigned: false }, &[&x], DType::I32, &shape, "widened")
+    } else {
+        x
+    }
+}
+
+fn compare(node: &SourceNode, ctx: &mut LowerCtx<'_>, op: Op, swap: bool, negate: bool) -> Result<()> {
+    let a = ctx.value(node.input(0)?)?;
+    let b = ctx.value(node.input(1)?)?;
+    let a = widen_for_compare(ctx, a);
+    let b = widen_for_compare(ctx, b);
+    let (a, b) = if swap { (b, a) } else { (a, b) };
+    let (a, b) = align_ranks(ctx, a, b);
+    let shape: Vec<i32> = a.shape.iter().zip(&b.shape).map(|(&x, &y)| x.max(y)).collect();
+    let mut y = ctx.emit_temp(op, OpAttribute::None, &[&a, &b], DType::Bool, &shape, "compare");
+    if negate {
+        y = ctx.emit_temp(Op::LogicalNot, OpAttribute::None, &[&y], DType::Bool, &shape, "not");
+    }
+    bind_named(ctx, node, 0, y)
+}
+
+fn bool_binary(node: &SourceNode, ctx: &mut LowerCtx<'_>, op: Op) -> Result<()> {
+    let a = ctx.value(node.input(0)?)?;
+    let b = ctx.value(node.input(1)?)?;
+    let (a, b) = align_ranks(ctx, a, b);
+    let shape: Vec<i32> = a.shape.iter().zip(&b.shape).map(|(&x, &y)| x.max(y)).collect();
+    let y = ctx.emit_temp(op, OpAttribute::None, &[&a, &b], DType::Bool, &shape, "logical");
+    bind_named(ctx, node, 0, y)
+}
+
+fn logical_not(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let x = ctx.value(node.input(0)?)?;
+    let y = unary_temp(ctx, Op::LogicalNot, &x, "logical_not");
+    bind_named(ctx, node, 0, y)
+}
+
+fn select(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let c = ctx.value(node.input(0)?)?;
+    let a = ctx.value(node.input(1)?)?;
+    let b = ctx.value(node.input(2)?)?;
+    let out = node.output(0)?;
+    let shape = shape_of(ctx, out);
+    let rank = shape.len();
+    let pad = |ctx: &mut LowerCtx<'_>, t: TensorRef, hint: &str| -> TensorRef {
+        if t.shape.len() == rank {
+            return t;
+        }
+        let mut s = vec![1; rank - t.shape.len()];
+        s.extend_from_slice(&t.shape);
+        reshape_temp(ctx, &t, &s, hint)
+    };
+    let c = pad(ctx, c, "select_c");
+    let a = pad(ctx, a, "select_a");
+    let b = pad(ctx, b, "select_b");
+    let y = ctx.emit_temp(Op::Select, OpAttribute::None, &[&c, &a, &b], a.dtype, &shape, "select");
+    bind_named(ctx, node, 0, y)
+}
+
+/// BATCH_MATMUL on float tensors: operands are brought to rank 3 with a
+/// shared batch dimension.
+fn batch_matmul(node: &SourceNode, ctx: &mut LowerCtx<'_>) -> Result<()> {
+    let adj_x = node.attrs.get("adj_x").map_or(Ok(false), |_| node.attr_bool("adj_x"))?;
+    let adj_y = node.attrs.get("adj_y").map_or(Ok(false), |_| node.attr_bool("adj_y"))?;
+    float_path(node, ctx, 2, |ctx, xs| {
+        let (mut a, mut b) = (xs[0].clone(), xs[1].clone());
+        let ra = a.shape.len();
+        let rb = b.shape.len();
+        if ra < 2 || rb < 2 {
+            return ctx.fail("BATCH_MATMUL operands must have rank 2 or more");
+        }
+        if adj_x {
+            let mut p: Vec<i32> = (0..ra as i32).collect();
+            p.swap(ra - 1, ra - 2);
+            a = crate::layout::transpose(ctx, &a, &p, "bmm_a_t");
+        }
+        if adj_y {
+            let mut p: Vec<i32> = (0..rb as i32).collect();
+            p.swap(rb - 1, rb - 2);
+            b = crate::layout::transpose(ctx, &b, &p, "bmm_b_t");
+        }
+        let batch_a: i32 = a.shape[..ra - 2].iter().product();
+        let batch_b: i32 = b.shape[..rb - 2].iter().product();
+        let (m, k) = (a.shape[ra - 2], a.shape[ra - 1]);
+        let n = b.shape[rb - 1];
+        let batch = batch_a.max(batch_b);
+        let a3 = reshape_temp(ctx, &a, &[batch_a, m, k], "bmm_a");
+        let b3 = reshape_temp(ctx, &b, &[batch_b, k, n], "bmm_b");
+        let a3 = if batch_a == batch { a3 } else { tile_batch(ctx, &a3, batch) };
+        let b3 = if batch_b == batch { b3 } else { tile_batch(ctx, &b3, batch) };
+        let zp = ctx.zero(a.dtype, "zp")?;
+        let y = ctx.emit_temp(Op::MatMul, OpAttribute::None, &[&a3, &b3, &zp, &zp], a.dtype, &[batch, m, n], "bmm");
+        let mut shape: Vec<i32> = if ra >= rb { a.shape[..ra - 2].to_vec() } else { b.shape[..rb - 2].to_vec() };
+        shape.extend([m, n]);
+        Ok(reshape_temp(ctx, &y, &shape, "bmm_out"))
+    })
+}
+
+fn tile_batch(ctx: &mut LowerCtx<'_>, x: &TensorRef, batch: i32) -> TensorRef {
+    let m = ctx.shape_const(&[batch as i64, 1, 1], "bmm_multiples");
+    let shape = vec![batch, x.shape[1], x.shape[2]];
+    ctx.emit_temp(Op::Tile, OpAttribute::None, &[x, &m], x.dtype, &shape, "bmm_tiled")
 }

@@ -102,10 +102,27 @@ through flatbuffer bindings generated from TensorFlow's `schema.fbs`
 are supported.
 
 **Operators** (float and quantized unless noted): CONV_2D, DEPTHWISE_CONV_2D,
-FULLY_CONNECTED, AVERAGE_POOL_2D, MAX_POOL_2D, ADD, SUB, MUL, RESHAPE,
-SQUEEZE, EXPAND_DIMS, SOFTMAX, LOGISTIC, TANH, RELU, RELU6, RELU_N1_TO_1,
-QUANTIZE, DEQUANTIZE, PAD, MEAN, CONCATENATION, and the fused activations of
-the above. `tosa convert --analyze` lists what a given model needs.
+TRANSPOSE_CONV, FULLY_CONNECTED, BATCH_MATMUL, AVERAGE_POOL_2D, MAX_POOL_2D,
+ADD, SUB, MUL, DIV, POW, SQUARED_DIFFERENCE, MAXIMUM, MINIMUM, RESHAPE,
+SQUEEZE, EXPAND_DIMS, TRANSPOSE, SLICE, STRIDED_SLICE (positive strides, no
+ellipsis or new axes), SPLIT, SPLIT_V, PACK, UNPACK, TILE, GATHER,
+CONCATENATION, PAD, DEPTH_TO_SPACE, SPACE_TO_DEPTH, RESIZE_BILINEAR,
+RESIZE_NEAREST_NEIGHBOR, MEAN, SUM, REDUCE_MAX, REDUCE_MIN, REDUCE_PROD,
+REDUCE_ANY, ARG_MAX, ARG_MIN, SOFTMAX, LOG_SOFTMAX, L2_NORMALIZATION,
+LOGISTIC, TANH, RELU, RELU6, RELU_N1_TO_1, HARD_SWISH, PRELU, LEAKY_RELU,
+ELU, GELU, EXP, LOG, SQRT, RSQRT, SIN, COS, ABS, FLOOR, CEIL, NEG, CAST,
+EQUAL, NOT_EQUAL, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL, LOGICAL_AND,
+LOGICAL_OR, LOGICAL_NOT, SELECT, SELECT_V2, QUANTIZE, DEQUANTIZE, and the
+fused activations of the above. `tosa convert --analyze` lists what a given
+model needs.
+
+**Shapes.** Models exported with a dynamic batch (or dynamic spatial sizes)
+record `-1` in each tensor's `shape_signature` and placeholder values in
+`shape`; LiteRT recomputes the real shapes when it allocates tensors, and
+so does the frontend: `tflite/shapes.rs` infers every dynamic intermediate
+shape from the operator's inputs and options with TFLite's own rules, and a
+dynamic graph input dimension becomes 1. MobileNet v3 from MediaPipe, for
+instance, records every feature map as 1x1.
 
 **Quantized arithmetic** follows TFLite's reference kernels and is bit-exact
 against them for the models tested:
@@ -140,15 +157,39 @@ double product is a few parts in 10^8, which moves the rounding boundary
 enough to change about one element in 20,000 and, compounded through a deep
 network, most of the final outputs.
 
-**Known approximations.** SOFTMAX, LOGISTIC and TANH on quantized tensors
-are computed in FP32 between a dequantize and a quantize rather than with
-TFLite's lookup-table and fixed-point kernels. On the models tested this
-agrees with TFLite on the recorded inputs and differs by at most one unit
-on at most 0.2% of the outputs over other seeds (EfficientNet-Lite0 int8 in
-the runtime matrix); everything upstream of these operators is bit-exact.
-QUANTIZE rounds half to even where TFLite rounds half away from zero.
-CONCATENATION of inputs with differing parameters uses RESCALE where TFLite
-requantizes in float.
+**Exact quantization.** QUANTIZE (and the quantize step of the float path
+below) must reproduce `round(x / scale)`, and TFLite divides. TOSA has no
+float division, and `x * (1 / scale)` is off by an ulp, which changes the
+rounded integer whenever the quotient lands within an ulp of a half-integer
+(one pixel in 150,000 on a typical image, and that one pixel then perturbs
+most logits of a quantized network). `quant::quantize_exact` therefore
+rounds the candidate `x * (1 / scale)` and decides *exactly* whether the
+true quotient is beyond the half-integer boundary on the candidate's side,
+by evaluating the sign of `x - boundary * scale` with Dekker's error-free
+product (Veltkamp splitting) in FP32 operators; ties follow the runtime's
+rule (TFLite: half away from zero; onnxruntime: half to even). It costs
+about 35 element-wise operators on the quantized tensor and makes the int8
+ONNX models below bit-exact end to end.
+
+**Known approximations.** SOFTMAX, LOGISTIC, TANH, HARD_SWISH, PRELU,
+LEAKY_RELU, ELU, GELU, the transcendental functions, L2_NORMALIZATION,
+LOG_SOFTMAX, SUM and REDUCE_PROD on quantized tensors are computed in FP32
+between a dequantize and a quantize rather than with TFLite's lookup-table
+and fixed-point kernels. On the models tested this agrees with TFLite on
+the recorded inputs and differs by at most one unit on at most 0.2% of the
+outputs over other seeds (EfficientNet-Lite0 int8 in the runtime matrix);
+everything upstream of these operators is bit-exact. CONCATENATION of
+inputs with differing parameters uses RESCALE where TFLite requantizes in
+float.
+
+Two float operators cannot match TFLite bit for bit because TOSA lacks the
+operation TFLite uses: HARD_SWISH divides by 6 (TOSA multiplies by 1/6; one
+ulp on about a quarter of the elements) and RESIZE_BILINEAR's source
+coordinates are computed by TFLite in float32 where TOSA RESIZE uses exact
+rationals (the interpolation weights differ by an ulp). Models that contain
+them (MobileNet v3, DeepLab v3) carry a documented `tolerance` in their
+`desc.json` (2e-5 and 1e-5 absolute, against observed maxima of 5e-6 and
+4e-6); everything else holds the default 1e-6.
 
 ## The ONNX frontend
 
@@ -158,16 +199,29 @@ so no protobuf toolchain is involved in building. Single-graph float models
 of the default operator domain are supported; symbolic input dimensions
 (a `batch_size` of unknown value) become 1.
 
-**Operators**: Conv (grouped only as depthwise), MaxPool, AveragePool
-(`count_include_pad` 0), GlobalAveragePool, GlobalMaxPool, Gemm, MatMul,
-BatchNormalization (folded into a per-channel multiply and add), Relu, Clip,
-LeakyRelu, Sigmoid, Tanh, Exp, Log, Abs, Neg, Floor, Ceil, Erf, Sqrt,
-Reciprocal, Add, Sub, Mul, Div, Pow, Max, Min, Softmax (both the pre- and
-post-opset-13 semantics), Flatten, Reshape, Squeeze, Unsqueeze, Transpose,
-Concat, Identity, Dropout, Pad, ReduceMean, Cast, and Shape, Gather and
-Slice on static shapes, which are evaluated at conversion time so the
+**Operators**: Conv (grouped only as depthwise), ConvTranspose (group 1),
+MaxPool, AveragePool (`count_include_pad` 0), GlobalAveragePool,
+GlobalMaxPool, Gemm, MatMul, BatchNormalization (folded into a per-channel
+multiply and add), InstanceNormalization, LRN, Relu, Clip, LeakyRelu, PRelu,
+Elu, HardSigmoid, HardSwish, Softplus, Sigmoid, Tanh, Exp, Log, Abs, Neg,
+Floor, Ceil, Erf, Sqrt, Reciprocal, Sin, Cos, Add, Sub, Mul, Div, Pow, Max,
+Min, Sum, Mean, Softmax and LogSoftmax (both the pre- and post-opset-13
+semantics), Flatten, Reshape, Squeeze, Unsqueeze, Transpose, Concat, Split,
+Tile, Expand, DepthToSpace (DCR and CRD), SpaceToDepth, Resize and Upsample
+(nearest and linear on 4-D tensors), Pad (constant, reflect, edge),
+Identity, Dropout, ReduceMean, ReduceMax, ReduceMin, ReduceSum, ReduceProd,
+ArgMax, ArgMin, Equal, Greater, GreaterOrEqual, Less, LessOrEqual, And, Or,
+Xor, Not, Where, Cast, and the quantized family QuantizeLinear,
+DequantizeLinear, QLinearConv (per-channel weights, depthwise), QLinearMatMul
+(per-column weights), `com.microsoft.QLinearAdd` and
+`com.microsoft.QLinearGlobalAveragePool`. Shape arithmetic on constants
+(Shape, Gather, Slice, Concat, Unsqueeze, Cast, Add, Sub, Mul, Div, Floor,
+Ceil) is evaluated at conversion time, so the
 `Reshape(x, Concat(Gather(Shape(x), 0), [-1]))` idiom exporters emit becomes
-a plain RESHAPE.
+a plain RESHAPE and the scale computations older exporters put in front of
+Upsample fold away. An optional output nobody reads (Dropout's mask) may be
+left unlowered. int64 values (ArgMax indices, Cast to int64) are INT32 in
+TOSA, which has no int64 data tensors.
 
 **Layout.** ONNX is channels-first. Convolutions and pools transpose their
 input to NHWC and their result back; the cleanup passes cancel the
@@ -183,8 +237,25 @@ its TFLite counterpart.
 provider, whose convolution and GEMM kernels accumulate in a blocked order,
 so results agree to float32 rounding rather than bit for bit: elements must
 satisfy `|a - e| <= 1e-5 + 1e-4 |e|` (observed maxima: 1e-5 absolute on
-MobileNetV2 logits). Quantized ONNX (QLinearConv, QuantizeLinear) is not
-supported yet.
+MobileNetV2 logits). The style-transfer network candy-9 amplifies these
+rounding differences through its InstanceNormalization layers (outputs span
+0..255, observed maximum 7.5e-4) and carries a 2e-3 absolute tolerance in
+its `desc.json`.
+
+**Quantized ONNX** follows onnxruntime's MLAS kernels, which requantize in
+float32: the INT32 accumulator of QLinearConv / QLinearMatMul (TOSA CONV2D,
+DEPTHWISE_CONV2D, MATMUL with zero-point operands) is cast to FP32,
+multiplied by the per-channel `x_scale * w_scale / y_scale` (each product
+rounded to float32 in that order), rounded half to even by CAST, offset by
+the zero point and saturated with MINIMUM/MAXIMUM (CLAMP has no INT32
+form). QLinearAdd multiplies each centred operand by its scale ratio and
+adds the output zero point *before* rounding, as MLAS does;
+QLinearGlobalAveragePool sums the centred INT32 values and scales by
+`x_scale / (y_scale * count)`. QuantizeLinear uses the exact division
+rounding described for TFLite (ties to even). uint8 tensors are INT8
+shifted by 128 as in the TFLite frontend. ResNet-50 and MobileNetV2 int8
+from the model zoo are bit-exact against onnxruntime end to end; the
+`qlinear` checked-in case covers every operator of the family.
 
 ## Verification
 
@@ -195,14 +266,20 @@ Three oracles, in increasing strictness of what they check:
    (flatc JSON compiled with `flatc`) and `scripts/onnx_testcases.py`
    (`onnx.helper`), with the native runtime's outputs recorded. They run in
    `cargo test`, offline.
-2. **Well-known models** (`scripts/models.py`): TFLite MobileNet v1 and v2
-   (float and uint8) and EfficientNet-Lite0 (float and int8), and ONNX
-   MobileNetV2, SqueezeNet 1.1 and ResNet-18 from the ONNX model zoo,
-   downloaded with pinned hashes into `target/models/`, with LiteRT's or
-   onnxruntime's outputs on seeded inputs.
+2. **Well-known models** (`scripts/models.py`, 25 models): TFLite MobileNet
+   v1 and v2 (float and uint8), EfficientNet-Lite0 (float and int8) and
+   Lite2 (int8), MobileNet v3 small and large, DeepLab v3, SSD MobileNet v2
+   and BlazeFace; ONNX MobileNetV2, SqueezeNet 1.1, ResNet-18, DenseNet-121,
+   ShuffleNet v2, EfficientNet-Lite4, Inception v1, MNIST, super-resolution,
+   emotion-ferplus, candy (style transfer) and the int8 MobileNetV2 and
+   ResNet-50, downloaded with pinned hashes into `target/models/`, with
+   LiteRT's or onnxruntime's outputs on seeded inputs.
    `cargo test --release -p tosa-convert --test models` converts and runs
-   them, requiring bit-exact quantized results (all four quantized models
-   are) and float results within 1e-6 (observed: 2e-9);
+   them, requiring bit-exact quantized results (all seven quantized models
+   are) and float results within 1e-6 for TFLite (observed: 2e-9 on the
+   MobileNets) and float32 rounding for ONNX; the three models with
+   documented inherent deviations (above) carry their tolerance in
+   `desc.json`, written by `models.py` from the `ModelSpec`;
    `cargo bench -p tosa-convert` benchmarks conversion and execution. Both skip when the models are absent. CI runs them on
    every push with the downloads cached.
 3. **The TOSA reference model**: `scripts/models.py --verify` converts each
@@ -266,6 +343,9 @@ operator's source location (the TFLite tensor it came from).
 
 ## Status
 
-The framework, the TFLite and ONNX frontends, the model tests and the
-command line are in place. Next: quantized ONNX (QLinear operators),
-ExecuTorch `.pte`, and a broader operator set as models need it.
+The framework, the TFLite and ONNX frontends (including quantized ONNX),
+the model tests and the command line are in place; 25 well-known models
+convert and match their native runtimes. Next: ExecuTorch `.pte`, grouped
+convolutions beyond depthwise, TFLite's fixed-point kernels for the
+activation functions on quantized tensors, and more operators as models
+need them.
